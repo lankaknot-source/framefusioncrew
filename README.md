@@ -98,3 +98,23 @@ For itemized projects the system automatically:
 - shows each equipment item and its cost in the project report,
 - shows the final equipment total in the report,
 - includes the same breakdown in the downloaded A4 PDF.
+
+
+## v4 — Director & Manager Signatures + Mobile Navigation
+
+- Added Director and Manager signature boxes at the bottom of each project report.
+- Tap either signature box to open a dedicated full-screen signature pad on phones/tablets.
+- Sign with finger or stylus, clear/retry, then save.
+- Signatures are stored inside that project in Local Storage.
+- Saved signatures appear in the report preview and are embedded into the downloaded A4 PDF.
+- Both signatures can be replaced later by tapping the signature again.
+- Mobile navigation moved from the top/status-bar area to a large bottom navigation bar for reliable touch access inside the Android app.
+- Added safe-area handling for modern Android/iPhone screens.
+
+## v5 — Signature Save Button + Exact Rupee Amounts
+
+- The signature Save button is now fixed to the bottom of the phone screen and always visible above the safe area/navigation bar.
+- The main app bottom navigation is hidden while signing so it cannot cover the signature controls.
+- Signature images are cropped and compressed before being saved to Local Storage.
+- All monetary inputs now use a 1-rupee step instead of 100. Values such as 2,340, 5,755, 12,345, etc. are accepted.
+- Updated fields include crew default payment, project revenue, total equipment cost, itemized equipment costs, target company profit, and per-project crew payments.

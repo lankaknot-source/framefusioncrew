@@ -279,3 +279,295 @@ button{cursor:pointer}
   .equipment-item-row input[type="number"]{grid-column:1}
   .equipment-item-row .remove-row{grid-column:2;grid-row:1 / span 2}
 }
+
+
+/* v4 mobile navigation + signature approval */
+.report-signatures{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:18mm;
+  margin-top:12mm;
+  padding-top:3mm;
+}
+.report-signature-card{
+  min-height:34mm;
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-end;
+  align-items:center;
+  text-align:center;
+  cursor:pointer;
+  position:relative;
+}
+.report-signature-image{
+  width:100%;
+  height:21mm;
+  object-fit:contain;
+  object-position:center bottom;
+  display:block;
+  margin-bottom:1mm;
+}
+.report-signature-empty{
+  width:100%;
+  height:21mm;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#9aa6b8;
+  font-size:8px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  border:1px dashed #d0d8e3;
+  border-radius:2mm;
+  margin-bottom:1mm;
+  background:#fbfcfe;
+}
+.report-signature-line{
+  width:100%;
+  border-top:1px solid #45556c;
+  margin-top:1mm;
+  padding-top:2mm;
+}
+.report-signature-role{
+  font-size:9px;
+  color:#172033;
+  font-weight:900;
+}
+.report-signature-hint{
+  font-size:7px;
+  color:#98a4b5;
+  margin-top:1mm;
+}
+.signature-modal{
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  background:#f5f7fb;
+  padding:0;
+  overflow:hidden;
+}
+.signature-modal.hidden{display:none}
+.signature-screen{
+  height:100vh;
+  height:100dvh;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  background:#f5f7fb;
+  padding-top:env(safe-area-inset-top,0px);
+}
+.signature-topbar{
+  min-height:68px;
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  align-items:center;
+  gap:12px;
+  background:#091426;
+  color:white;
+  padding:10px 14px;
+}
+.signature-heading{text-align:center;min-width:0}
+.signature-heading p{
+  font-size:10px;
+  text-transform:uppercase;
+  letter-spacing:.18em;
+  color:#65c7ef;
+  font-weight:900;
+}
+.signature-heading h3{
+  font-size:17px;
+  font-weight:950;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.signature-top-btn{
+  min-width:58px;
+  min-height:44px;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.07);
+  color:white;
+  border-radius:12px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  font-size:12px;
+  font-weight:800;
+}
+.signature-top-btn svg{width:17px;height:17px}
+.signature-instructions{
+  padding:12px 16px 8px;
+  text-align:center;
+  font-size:13px;
+  color:#68768a;
+  font-weight:700;
+}
+.signature-canvas-wrap{
+  position:relative;
+  flex:1 1 auto;
+  min-height:0;
+  margin:8px 14px calc(88px + env(safe-area-inset-bottom,0px));
+  background:white;
+  border:2px solid #cbd5e1;
+  border-radius:18px;
+  overflow:hidden;
+  touch-action:none;
+}
+#signatureCanvas{
+  width:100%;
+  height:100%;
+  display:block;
+  touch-action:none;
+  background:white;
+}
+.signature-guide{
+  position:absolute;
+  left:9%;
+  right:9%;
+  bottom:19%;
+  border-top:1px dashed #ccd4df;
+  padding-top:8px;
+  text-align:center;
+  color:#c1c9d3;
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:.18em;
+  pointer-events:none;
+}
+.signature-actions{
+  position:fixed;
+  left:0;
+  right:0;
+  bottom:0;
+  z-index:10005;
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));
+  background:rgba(245,247,251,.98);
+  border-top:1px solid #dbe3ec;
+  backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+}
+.signature-save-btn{
+  width:100%;
+  min-height:56px;
+  font-size:16px;
+  border-radius:14px;
+  box-shadow:0 10px 28px rgba(15,27,49,.18);
+}
+body.signature-open{
+  overflow:hidden!important;
+  position:fixed;
+  width:100%;
+}
+
+/* Move mobile app navigation away from the status bar and make it easy to tap. */
+@media(max-width:1023px){
+  body{
+    padding-bottom:calc(78px + env(safe-area-inset-bottom,0px));
+  }
+  #appShell{display:block!important}
+  .sidebar{
+    position:fixed!important;
+    left:0;
+    right:0;
+    bottom:0;
+    top:auto;
+    z-index:55;
+    width:100%;
+    min-height:auto;
+    padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px));
+    display:block;
+    background:rgba(9,20,38,.98);
+    border-top:1px solid rgba(255,255,255,.08);
+    backdrop-filter:blur(18px);
+  }
+  .sidebar .brand-block,
+  .sidebar .sidebar-note{
+    display:none!important;
+  }
+  .sidebar nav{
+    margin:0!important;
+    display:grid!important;
+    grid-template-columns:repeat(4,1fr);
+    gap:6px!important;
+  }
+  .nav-btn{
+    width:100%!important;
+    min-height:56px;
+    padding:7px 4px!important;
+    border-radius:12px;
+    display:flex!important;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:4px!important;
+    text-align:center;
+    white-space:normal!important;
+    font-size:10px;
+  }
+  .nav-btn svg{
+    width:21px!important;
+    height:21px!important;
+    flex:none;
+  }
+  .nav-btn span{
+    display:block!important;
+    font-size:10px;
+    line-height:1.05;
+  }
+  .topbar{
+    position:sticky;
+    top:0;
+    z-index:40;
+    padding-top:calc(15px + env(safe-area-inset-top,0px));
+  }
+}
+@media(max-width:767px){
+  .report-signatures{
+    grid-template-columns:1fr 1fr;
+    gap:8mm;
+    margin-top:10mm;
+  }
+  .report-signature-card{min-height:30mm}
+  .report-signature-image,.report-signature-empty{height:18mm}
+}
+@media print{
+  .report-signature-hint{display:none!important}
+}
+
+
+/* v5 signature visibility + arbitrary money values */
+.signature-modal .signature-screen{
+  padding-bottom:0!important;
+}
+.signature-modal .signature-actions{
+  visibility:visible!important;
+  opacity:1!important;
+  transform:none!important;
+}
+.signature-open .sidebar{
+  display:none!important;
+}
+.signature-open .topbar{
+  display:none!important;
+}
+.signature-open #appShell{
+  pointer-events:none;
+}
+.signature-open #signatureModal{
+  pointer-events:auto;
+}
+@media(max-height:620px){
+  .signature-topbar{min-height:56px;padding:6px 10px}
+  .signature-top-btn{min-height:40px}
+  .signature-instructions{padding:7px 10px 4px;font-size:11px}
+  .signature-canvas-wrap{
+    margin:5px 10px calc(78px + env(safe-area-inset-bottom,0px));
+  }
+  .signature-actions{
+    padding:7px 10px calc(7px + env(safe-area-inset-bottom,0px));
+  }
+  .signature-save-btn{min-height:50px}
+}

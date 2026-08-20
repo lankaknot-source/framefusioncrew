@@ -9,6 +9,10 @@ let projects = load(STORAGE_KEYS.projects, []);
 let editingProjectCrew = [];
 let editingEquipmentItems = [];
 let activeReportProjectId = null;
+let activeSignatureRole = null;
+let signaturePadHasInk = false;
+let signaturePadDrawing = false;
+let signaturePadLastPoint = null;
 
 function load(key, fallback){
   try{
@@ -313,7 +317,7 @@ function renderEquipmentItems(){
     list.innerHTML=editingEquipmentItems.map((item,i)=>`
       <div class="equipment-item-row">
         <input class="equipment-item-name" value="${escapeHtml(item.name||"")}" placeholder="Equipment / service name" oninput="updateEquipmentName(${i},this.value)" />
-        <input type="number" min="0" step="100" value="${Number(item.cost||0)}" placeholder="Cost (LKR)" oninput="updateEquipmentCost(${i},this.value)" />
+        <input type="number" min="0" step="1" inputmode="numeric" value="${Number(item.cost||0)}" placeholder="Cost (LKR)" oninput="updateEquipmentCost(${i},this.value)" />
         <button type="button" class="remove-row" title="Remove equipment" onclick="removeEquipmentItem(${i})"><i data-lucide="x"></i></button>
       </div>`).join("");
   }
@@ -354,7 +358,7 @@ function renderProjectCrewRows(){
         <div class="project-crew-role">Saved crew member</div>
       </div>
       <input value="${escapeHtml(m.role)}" oninput="updateProjectCrewRole(${i},this.value)" aria-label="Role" />
-      <input type="number" min="0" step="100" value="${Number(m.payment||0)}" oninput="updateProjectCrewPayment(${i},this.value)" aria-label="Payment" />
+      <input type="number" min="0" step="1" inputmode="numeric" value="${Number(m.payment||0)}" oninput="updateProjectCrewPayment(${i},this.value)" aria-label="Payment" />
       <button type="button" class="remove-row" onclick="removeProjectCrew(${i})"><i data-lucide="x"></i></button>
     </div>`).join("");
   lucide.createIcons();
@@ -402,6 +406,224 @@ function updateProjectCalcs(){
   renderEquipmentItemsTotalOnly();
   const el=document.getElementById("calcProfit");
   if(el){el.className=profit<0?"text-red-500":"text-ffgreen";}
+}
+
+
+function projectSignatures(p){
+  const s=p?.signatures||{};
+  return {
+    director: typeof s.director==="string" ? s.director : "",
+    manager: typeof s.manager==="string" ? s.manager : ""
+  };
+}
+function signatureRoleLabel(role){
+  return role==="manager" ? "Manager" : "Director";
+}
+function signatureCardHtml(p,role){
+  const signatures=projectSignatures(p);
+  const value=signatures[role]||"";
+  const label=signatureRoleLabel(role);
+  return `
+    <div class="report-signature-card" role="button" tabindex="0"
+         onclick="openSignaturePad('${role}')"
+         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSignaturePad('${role}')}"
+         aria-label="${label} signature">
+      ${value
+        ? `<img class="report-signature-image" src="${value}" alt="${label} signature" />`
+        : `<div class="report-signature-empty">Tap to Sign</div>`}
+      <div class="report-signature-line">
+        <div class="report-signature-role">${label}</div>
+        <div class="report-signature-hint">${value ? "Tap to replace signature" : "Tap here to sign"}</div>
+      </div>
+    </div>`;
+}
+function openSignaturePad(role){
+  const p=projects.find(x=>x.id===activeReportProjectId);
+  if(!p) return;
+  activeSignatureRole=role==="manager" ? "manager" : "director";
+  const modal=document.getElementById("signatureModal");
+  const title=document.getElementById("signatureTitle");
+  if(title) title.textContent=`${signatureRoleLabel(activeSignatureRole)} Signature`;
+  const saveBtn=document.getElementById("signatureSaveBtn");
+  if(saveBtn) saveBtn.innerHTML='<i data-lucide="check"></i> Save Signature';
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden","false");
+  document.body.classList.add("signature-open");
+  requestAnimationFrame(()=>{
+    setupSignatureCanvas();
+    lucide.createIcons();
+  });
+}
+function closeSignaturePad(){
+  const modal=document.getElementById("signatureModal");
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden","true");
+  document.body.classList.remove("signature-open");
+  activeSignatureRole=null;
+  signaturePadDrawing=false;
+  signaturePadLastPoint=null;
+}
+function setupSignatureCanvas(){
+  const canvas=document.getElementById("signatureCanvas");
+  const wrap=canvas.parentElement;
+  const rect=wrap.getBoundingClientRect();
+  const dpr=Math.max(1,Math.min(window.devicePixelRatio||1,3));
+  canvas.width=Math.max(1,Math.floor(rect.width*dpr));
+  canvas.height=Math.max(1,Math.floor(rect.height*dpr));
+  const ctx=canvas.getContext("2d");
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle="#ffffff";
+  ctx.fillRect(0,0,rect.width,rect.height);
+  ctx.lineCap="round";
+  ctx.lineJoin="round";
+  ctx.strokeStyle="#111827";
+  ctx.lineWidth=3.2;
+  signaturePadHasInk=false;
+  signaturePadDrawing=false;
+  signaturePadLastPoint=null;
+
+  const p=projects.find(x=>x.id===activeReportProjectId);
+  const existing=projectSignatures(p)[activeSignatureRole]||"";
+  if(existing){
+    const img=new Image();
+    img.onload=()=>{
+      const padding=24;
+      const maxW=Math.max(10,rect.width-padding*2);
+      const maxH=Math.max(10,rect.height-padding*2);
+      const ratio=Math.min(maxW/img.width,maxH/img.height);
+      const dw=img.width*ratio,dh=img.height*ratio;
+      ctx.drawImage(img,(rect.width-dw)/2,(rect.height-dh)/2,dw,dh);
+      signaturePadHasInk=true;
+    };
+    img.src=existing;
+  }
+}
+function signatureCanvasPoint(event){
+  const canvas=document.getElementById("signatureCanvas");
+  const rect=canvas.getBoundingClientRect();
+  return {x:event.clientX-rect.left,y:event.clientY-rect.top};
+}
+function signaturePointerDown(event){
+  if(event.pointerType==="mouse" && event.button!==0) return;
+  const canvas=document.getElementById("signatureCanvas");
+  try{canvas.setPointerCapture(event.pointerId);}catch(e){}
+  signaturePadDrawing=true;
+  signaturePadLastPoint=signatureCanvasPoint(event);
+  event.preventDefault();
+}
+function signaturePointerMove(event){
+  if(!signaturePadDrawing||!signaturePadLastPoint) return;
+  const canvas=document.getElementById("signatureCanvas");
+  const ctx=canvas.getContext("2d");
+  const p=signatureCanvasPoint(event);
+  ctx.beginPath();
+  ctx.moveTo(signaturePadLastPoint.x,signaturePadLastPoint.y);
+  ctx.lineTo(p.x,p.y);
+  ctx.stroke();
+  signaturePadLastPoint=p;
+  signaturePadHasInk=true;
+  event.preventDefault();
+}
+function signaturePointerUp(event){
+  signaturePadDrawing=false;
+  signaturePadLastPoint=null;
+  event.preventDefault();
+}
+function clearSignatureCanvas(){
+  const canvas=document.getElementById("signatureCanvas");
+  const rect=canvas.getBoundingClientRect();
+  const ctx=canvas.getContext("2d");
+  ctx.fillStyle="#ffffff";
+  ctx.fillRect(0,0,rect.width,rect.height);
+  ctx.strokeStyle="#111827";
+  ctx.lineWidth=3.2;
+  ctx.lineCap="round";
+  ctx.lineJoin="round";
+  signaturePadHasInk=false;
+  const saveBtn=document.getElementById("signatureSaveBtn");
+  if(saveBtn) saveBtn.innerHTML='<i data-lucide="check"></i> Save Signature';
+  lucide.createIcons();
+}
+function trimmedSignatureDataUrl(){
+  const source=document.getElementById("signatureCanvas");
+  const sw=source.width,sh=source.height;
+  const sctx=source.getContext("2d");
+  const pixels=sctx.getImageData(0,0,sw,sh);
+  const data=pixels.data;
+  let minX=sw,minY=sh,maxX=-1,maxY=-1;
+  const threshold=225;
+
+  for(let y=0;y<sh;y++){
+    for(let x=0;x<sw;x++){
+      const i=(y*sw+x)*4;
+      const r=data[i],g=data[i+1],b=data[i+2],a=data[i+3];
+      if(a>0 && (r<threshold || g<threshold || b<threshold)){
+        if(x<minX)minX=x;
+        if(x>maxX)maxX=x;
+        if(y<minY)minY=y;
+        if(y>maxY)maxY=y;
+      }
+    }
+  }
+
+  if(maxX<0||maxY<0) return "";
+
+  const pad=Math.round(Math.min(sw,sh)*0.035);
+  minX=Math.max(0,minX-pad);
+  minY=Math.max(0,minY-pad);
+  maxX=Math.min(sw-1,maxX+pad);
+  maxY=Math.min(sh-1,maxY+pad);
+
+  const cropW=maxX-minX+1;
+  const cropH=maxY-minY+1;
+
+  // Keep signatures compact so many projects can safely stay in Local Storage.
+  const maxW=900;
+  const maxH=320;
+  const scale=Math.min(1,maxW/cropW,maxH/cropH);
+  const outW=Math.max(1,Math.round(cropW*scale));
+  const outH=Math.max(1,Math.round(cropH*scale));
+
+  const out=document.createElement("canvas");
+  out.width=outW;
+  out.height=outH;
+  const octx=out.getContext("2d");
+  octx.fillStyle="#ffffff";
+  octx.fillRect(0,0,outW,outH);
+  octx.drawImage(source,minX,minY,cropW,cropH,0,0,outW,outH);
+
+  return out.toDataURL("image/jpeg",0.78);
+}
+function saveSignatureFromPad(){
+  const p=projects.find(x=>x.id===activeReportProjectId);
+  if(!p||!activeSignatureRole) return;
+  if(!signaturePadHasInk){
+    toast("Please add a signature first");
+    return;
+  }
+  const dataUrl=trimmedSignatureDataUrl();
+  if(!dataUrl){
+    toast("Please add a signature first");
+    return;
+  }
+  p.signatures={...(p.signatures||{}),[activeSignatureRole]:dataUrl};
+  p.updatedAt=Date.now();
+  save();
+  const roleLabel=signatureRoleLabel(activeSignatureRole);
+  closeSignaturePad();
+  document.getElementById("reportPaper").innerHTML=reportHtml(p);
+  renderProjects();
+  renderDashboard();
+  toast(`${roleLabel} signature saved`);
+}
+function loadDataImage(src){
+  return new Promise((resolve,reject)=>{
+    if(!src){resolve(null);return;}
+    const img=new Image();
+    img.onload=()=>resolve(img);
+    img.onerror=reject;
+    img.src=src;
+  });
 }
 
 function reportHtml(p){
@@ -476,6 +698,11 @@ function reportHtml(p){
         <tr class="strong-row"><td colspan="2">Total Crew Payments</td><td>${money(n.crewTotal)}</td></tr>
       </tbody>
     </table>
+
+    <div class="report-signatures">
+      ${signatureCardHtml(p,"director")}
+      ${signatureCardHtml(p,"manager")}
+    </div>
 
     <div class="report-footer">FrameFusion Studio • ${escapeHtml(p.name)} • Budget Report • Generated by FrameFusion Budget & Crew Manager</div>
   `;
@@ -701,6 +928,49 @@ function drawCrewTablePage(ctx,p,rows,W,margin,y,showTotal){
   return endY;
 }
 
+
+function drawSignatureArea(ctx,role,img,x,y,w,h){
+  const label=signatureRoleLabel(role);
+  const imageH=h-58;
+  if(img){
+    const pad=16;
+    const ratio=Math.min((w-pad*2)/img.width,(imageH-pad)/img.height);
+    const dw=img.width*ratio,dh=img.height*ratio;
+    ctx.drawImage(img,x+(w-dw)/2,y+(imageH-dh)/2,dw,dh);
+  }else{
+    ctx.save();
+    ctx.setLineDash([8,8]);
+    ctx.strokeStyle="#cbd5df";
+    ctx.lineWidth=2;
+    roundRect(ctx,x+8,y+6,w-16,imageH-12,10,null,"#cbd5df",2);
+    ctx.restore();
+    ctx.textAlign="center";
+    ctx.fillStyle="#a0acbb";
+    ctx.font="800 14px Arial";
+    ctx.fillText("SIGNATURE NOT ADDED",x+w/2,y+imageH/2+5);
+    ctx.textAlign="left";
+  }
+  ctx.strokeStyle="#46566d";
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(x,y+imageH+6);
+  ctx.lineTo(x+w,y+imageH+6);
+  ctx.stroke();
+  ctx.textAlign="center";
+  ctx.fillStyle="#172033";
+  ctx.font="900 18px Arial";
+  ctx.fillText(label,x+w/2,y+imageH+34);
+  ctx.textAlign="left";
+}
+function drawApprovalSignatures(ctx,p,directorImg,managerImg,W,margin,y){
+  const gap=90;
+  const w=(W-margin*2-gap)/2;
+  const h=190;
+  drawSignatureArea(ctx,"director",directorImg,margin,y,w,h);
+  drawSignatureArea(ctx,"manager",managerImg,margin+w+gap,y,w,h);
+  return y+h;
+}
+
 function drawFooter(ctx,p,W,margin,H){
   ctx.strokeStyle="#e1e7ee";ctx.lineWidth=1;
   ctx.beginPath();ctx.moveTo(margin,H-100);ctx.lineTo(W-margin,H-100);ctx.stroke();
@@ -713,6 +983,11 @@ function drawFooter(ctx,p,W,margin,H){
 async function buildReportCanvases(p){
   const W=1240,H=1754,margin=72,bottomLimit=H-125;
   const logo=await loadReportLogo().catch(()=>null);
+  const signatures=projectSignatures(p);
+  const [directorSignatureImg,managerSignatureImg]=await Promise.all([
+    loadDataImage(signatures.director).catch(()=>null),
+    loadDataImage(signatures.manager).catch(()=>null)
+  ]);
   const n=projectNumbers(p);
   const equipmentRows=((p.equipmentMode||"total")==="itemized") ? (p.equipmentItems||[]) : [];
   const allCrew=p.crew||[];
@@ -827,6 +1102,25 @@ async function buildReportCanvases(p){
     }
     firstCrewChunk=false;
   }
+
+  // Approval signatures are always placed after the financial/crew details.
+  const signatureSectionHeight=285;
+  if(bottomLimit-state.y < signatureSectionHeight){
+    finishPage(state);
+    state=createPage("Approval Signatures");
+    state.y=drawSectionTitle(state.ctx,"Approval Signatures",W,margin,state.y);
+  }else{
+    state.y=drawSectionTitle(state.ctx,"Approval Signatures",W,margin,state.y+24);
+  }
+  state.y=drawApprovalSignatures(
+    state.ctx,
+    p,
+    directorSignatureImg,
+    managerSignatureImg,
+    W,
+    margin,
+    state.y+10
+  );
 
   finishPage(state);
   return pages;
@@ -1019,6 +1313,15 @@ document.addEventListener("DOMContentLoaded",()=>{
   document.getElementById("downloadReportBtn").addEventListener("click",downloadActiveReport);
   document.getElementById("printReportBtn").addEventListener("click",()=>window.print());
 
+  const signatureCanvas=document.getElementById("signatureCanvas");
+  signatureCanvas.addEventListener("pointerdown",signaturePointerDown,{passive:false});
+  signatureCanvas.addEventListener("pointermove",signaturePointerMove,{passive:false});
+  signatureCanvas.addEventListener("pointerup",signaturePointerUp,{passive:false});
+  signatureCanvas.addEventListener("pointercancel",signaturePointerUp,{passive:false});
+  document.getElementById("signatureClearBtn").addEventListener("click",clearSignatureCanvas);
+  document.getElementById("signatureCancelBtn").addEventListener("click",closeSignaturePad);
+  document.getElementById("signatureSaveBtn").addEventListener("click",saveSignatureFromPad);
+
   document.getElementById("exportBackupBtn").addEventListener("click",exportBackup);
   document.getElementById("restoreInput").addEventListener("change",e=>restoreBackup(e.target.files[0]));
 
@@ -1035,6 +1338,7 @@ window.editProject=editProject;
 window.duplicateProject=duplicateProject;
 window.deleteProject=deleteProject;
 window.openReport=openReport;
+window.openSignaturePad=openSignaturePad;
 window.updateEquipmentName=updateEquipmentName;
 window.updateEquipmentCost=updateEquipmentCost;
 window.removeEquipmentItem=removeEquipmentItem;
