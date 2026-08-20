@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f1b31" />
+  <title>FrameFusion Studio — Budget & Crew Manager</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ffnavy: "#0f1b31",
+            ffblue: "#11a8e5",
+            ffink: "#162033",
+            ffgreen: "#20b457",
+            fflight: "#f6f8fb",
+          },
+          boxShadow: {
+            soft: "0 12px 35px rgba(15,27,49,.10)",
+            lift: "0 18px 50px rgba(15,27,49,.16)"
+          }
+        }
+      }
+    }
+  </script>
+
+  <script src="https://unpkg.com/lucide@latest"></script>
+<link rel="stylesheet" href="styles.css" />
+</head>
+
+<body class="min-h-screen bg-slate-100 text-ffink">
+  <div id="appShell" class="min-h-screen lg:flex">
+    <aside class="sidebar no-print">
+      <div class="brand-block">
+        <img src="assets/framefusion-logo-transparent.png" alt="FrameFusion Studio logo" class="brand-logo" />
+        <div>
+          <div class="text-white font-black tracking-wide">FRAMEFUSION</div>
+          <div class="text-sky-300 text-xs tracking-[.28em]">STUDIO</div>
+        </div>
+      </div>
+
+      <nav class="mt-8 space-y-2">
+        <button class="nav-btn active" data-view="dashboard">
+          <i data-lucide="layout-dashboard"></i><span>Dashboard</span>
+        </button>
+        <button class="nav-btn" data-view="projects">
+          <i data-lucide="folder-kanban"></i><span>Projects</span>
+        </button>
+        <button class="nav-btn" data-view="crew">
+          <i data-lucide="users"></i><span>Crew Members</span>
+        </button>
+        <button class="nav-btn" data-view="backup">
+          <i data-lucide="database-backup"></i><span>Backup & Restore</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-note">
+        <i data-lucide="hard-drive"></i>
+        <div>
+          <div class="font-semibold">Local Storage</div>
+          <div class="text-xs text-slate-400">Projects & crew stay on this browser.</div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="flex-1 min-w-0">
+      <header class="topbar no-print">
+        <div>
+          <p class="text-xs uppercase tracking-[.2em] font-bold text-slate-400">FrameFusion Studio</p>
+          <h1 id="pageTitle" class="text-2xl md:text-3xl font-black text-ffnavy">Dashboard</h1>
+        </div>
+        <div class="flex flex-wrap gap-2 justify-end">
+          <button id="quickCrewBtn" class="btn btn-light"><i data-lucide="user-plus"></i> Add Crew</button>
+          <button id="quickProjectBtn" class="btn btn-primary"><i data-lucide="plus"></i> New Project</button>
+        </div>
+      </header>
+
+      <section class="p-4 md:p-6 lg:p-8">
+        <!-- Dashboard -->
+        <div id="view-dashboard" class="app-view">
+          <div class="hero-card">
+            <div>
+              <p class="text-sky-300 text-sm font-bold tracking-[.18em] uppercase">Budget Control Center</p>
+              <h2 class="text-3xl md:text-4xl font-black text-white mt-2">Every live coverage project,<br class="hidden md:block" /> in one place.</h2>
+              <p class="text-slate-300 mt-3 max-w-2xl">Create projects, assign crew, calculate payments and generate the same clean budget report style for every project.</p>
+            </div>
+            <div class="hero-actions">
+              <button class="btn btn-sky" data-jump="projects"><i data-lucide="folder-plus"></i>Create Project</button>
+              <button class="btn btn-darkglass" data-jump="crew"><i data-lucide="users"></i>Manage Crew</button>
+            </div>
+          </div>
+
+          <div id="dashboardStats" class="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mt-6"></div>
+
+          <div class="grid xl:grid-cols-[1.4fr_.8fr] gap-6 mt-6">
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Recent Projects</h3>
+                  <p>Your latest production budgets</p>
+                </div>
+                <button class="text-btn" data-jump="projects">View all <i data-lucide="arrow-right"></i></button>
+              </div>
+              <div id="recentProjects"></div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Quick Actions</h3>
+                  <p>Common project tasks</p>
+                </div>
+              </div>
+              <div class="grid gap-3">
+                <button class="quick-card" data-action="new-project">
+                  <span class="quick-icon"><i data-lucide="folder-plus"></i></span>
+                  <span><b>New Project</b><small>Start a fresh budget</small></span>
+                  <i data-lucide="chevron-right"></i>
+                </button>
+                <button class="quick-card" data-action="new-crew">
+                  <span class="quick-icon"><i data-lucide="user-plus"></i></span>
+                  <span><b>Add Crew Member</b><small>Save to your crew database</small></span>
+                  <i data-lucide="chevron-right"></i>
+                </button>
+                <button class="quick-card" data-action="backup">
+                  <span class="quick-icon"><i data-lucide="download"></i></span>
+                  <span><b>Export Backup</b><small>Download all local data</small></span>
+                  <i data-lucide="chevron-right"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Projects -->
+        <div id="view-projects" class="app-view hidden">
+          <div class="panel">
+            <div class="panel-head flex-col md:flex-row md:items-center gap-4">
+              <div>
+                <h3>Projects</h3>
+                <p>Create multiple projects and generate an individual PDF report for each one.</p>
+              </div>
+              <div class="flex flex-wrap gap-2 md:ml-auto w-full md:w-auto">
+                <div class="search-box flex-1 md:flex-none">
+                  <i data-lucide="search"></i>
+                  <input id="projectSearch" type="search" placeholder="Search projects..." />
+                </div>
+                <button id="newProjectBtn" class="btn btn-primary"><i data-lucide="plus"></i>New Project</button>
+              </div>
+            </div>
+            <div id="projectsGrid" class="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mt-5"></div>
+          </div>
+        </div>
+
+        <!-- Crew -->
+        <div id="view-crew" class="app-view hidden">
+          <div class="panel">
+            <div class="panel-head flex-col md:flex-row md:items-center gap-4">
+              <div>
+                <h3>Crew Members</h3>
+                <p>Add your permanent/freelance crew once, then assign them to any project.</p>
+              </div>
+              <div class="flex flex-wrap gap-2 md:ml-auto w-full md:w-auto">
+                <div class="search-box flex-1 md:flex-none">
+                  <i data-lucide="search"></i>
+                  <input id="crewSearch" type="search" placeholder="Search crew..." />
+                </div>
+                <button id="newCrewBtn" class="btn btn-primary"><i data-lucide="user-plus"></i>Add Crew</button>
+              </div>
+            </div>
+            <div id="crewTableWrap" class="table-wrap mt-5"></div>
+          </div>
+        </div>
+
+        <!-- Backup -->
+        <div id="view-backup" class="app-view hidden">
+          <div class="grid lg:grid-cols-2 gap-6">
+            <div class="panel">
+              <div class="panel-head">
+                <div><h3>Export Backup</h3><p>Download all projects and crew as a JSON file.</p></div>
+              </div>
+              <div class="backup-card">
+                <span class="backup-icon"><i data-lucide="download"></i></span>
+                <div>
+                  <h4>FrameFusion Local Data</h4>
+                  <p>Use this before changing computers or clearing browser data.</p>
+                </div>
+              </div>
+              <button id="exportBackupBtn" class="btn btn-primary mt-5"><i data-lucide="download"></i>Download Backup</button>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div><h3>Restore Backup</h3><p>Import a previously exported JSON backup.</p></div>
+              </div>
+              <label class="upload-zone">
+                <i data-lucide="upload-cloud"></i>
+                <span class="font-bold">Choose backup file</span>
+                <span class="text-sm text-slate-500">JSON only</span>
+                <input id="restoreInput" type="file" accept=".json,application/json" class="hidden" />
+              </label>
+              <div class="mt-4 rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
+                Restoring replaces the current Local Storage data in this browser.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Crew Modal -->
+  <div id="crewModal" class="modal hidden no-print">
+    <div class="modal-card max-w-xl">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Crew Database</p>
+          <h3 id="crewModalTitle">Add Crew Member</h3>
+        </div>
+        <button class="icon-btn" data-close="crewModal"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="crewForm" class="grid md:grid-cols-2 gap-4 mt-5">
+        <input type="hidden" id="crewId" />
+        <label class="field md:col-span-2">
+          <span>Member Name *</span>
+          <input id="crewName" required placeholder="e.g. Sithum" />
+        </label>
+        <label class="field">
+          <span>Role / Responsibility *</span>
+          <input id="crewRole" required placeholder="e.g. Broadcasting Director" />
+        </label>
+        <label class="field">
+          <span>Default Payment (LKR)</span>
+          <input id="crewRate" type="number" min="0" step="100" placeholder="7000" />
+        </label>
+        <label class="field">
+          <span>Phone</span>
+          <input id="crewPhone" placeholder="07X XXX XXXX" />
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input id="crewEmail" type="email" placeholder="name@example.com" />
+        </label>
+        <label class="field md:col-span-2">
+          <span>Notes</span>
+          <textarea id="crewNotes" rows="3" placeholder="Optional notes"></textarea>
+        </label>
+        <div class="md:col-span-2 flex justify-end gap-2 pt-2">
+          <button type="button" class="btn btn-light" data-close="crewModal">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i data-lucide="save"></i>Save Crew Member</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Project Modal -->
+  <div id="projectModal" class="modal hidden no-print">
+    <div class="modal-card max-w-5xl">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Project Budget</p>
+          <h3 id="projectModalTitle">Create Project</h3>
+        </div>
+        <button class="icon-btn" data-close="projectModal"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="projectForm" class="mt-5">
+        <input type="hidden" id="projectId" />
+
+        <div class="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <label class="field md:col-span-2">
+            <span>Project Name *</span>
+            <input id="projectName" required placeholder="e.g. Match Live Coverage Budget" />
+          </label>
+          <label class="field">
+            <span>Project Date</span>
+            <input id="projectDate" type="date" />
+          </label>
+          <label class="field">
+            <span>Client / Event</span>
+            <input id="projectClient" placeholder="Optional" />
+          </label>
+          <label class="field md:col-span-2">
+            <span>Location / Venue</span>
+            <input id="projectLocation" placeholder="Optional" />
+          </label>
+          <label class="field">
+            <span>Total Revenue (LKR) *</span>
+            <input id="projectRevenue" type="number" min="0" step="100" required placeholder="120000" />
+          </label>
+          <div class="field md:col-span-2">
+            <span>Equipment / Production Cost *</span>
+            <div class="equipment-mode-switch">
+              <label class="equipment-mode-option">
+                <input type="radio" name="equipmentMode" value="total" checked />
+                <span><i data-lucide="calculator"></i> Enter Total Cost</span>
+              </label>
+              <label class="equipment-mode-option">
+                <input type="radio" name="equipmentMode" value="itemized" />
+                <span><i data-lucide="list-plus"></i> Itemized Equipment List</span>
+              </label>
+            </div>
+
+            <div id="equipmentTotalMode" class="mt-3">
+              <input id="projectEquipment" type="number" min="0" step="100" placeholder="70000" />
+              <p class="equipment-help">Use this when you only want to enter one final equipment/production total.</p>
+            </div>
+
+            <div id="equipmentItemizedMode" class="hidden mt-3">
+              <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
+                <div>
+                  <div class="font-black text-ffnavy text-sm">Equipment Cost List</div>
+                  <div class="text-xs text-slate-500">Add the equipment/service name and its cost.</div>
+                </div>
+                <button id="addEquipmentItemBtn" type="button" class="btn btn-light sm:ml-auto">
+                  <i data-lucide="plus"></i>Add Equipment
+                </button>
+              </div>
+              <div id="equipmentItemsList" class="grid gap-2"></div>
+              <div class="equipment-total-box">
+                <span>Equipment Total</span>
+                <strong id="equipmentItemsTotal">LKR 0</strong>
+              </div>
+            </div>
+          </div>
+          <label class="field">
+            <span>Target Company Profit (LKR)</span>
+            <input id="projectTargetProfit" type="number" min="0" step="100" placeholder="12000" />
+          </label>
+          <label class="field">
+            <span>Report Subtitle</span>
+            <input id="projectSubtitle" placeholder="Official Budget Breakdown & Crew Payment Allocation" />
+          </label>
+        </div>
+
+        <div class="section-divider"></div>
+
+        <div class="flex flex-col lg:flex-row lg:items-center gap-3">
+          <div>
+            <h4 class="font-black text-lg text-ffnavy">Crew Payment Allocation</h4>
+            <p class="text-sm text-slate-500">Assign saved crew members and change the payment for this project.</p>
+          </div>
+          <button id="addCrewToProjectBtn" type="button" class="btn btn-light lg:ml-auto"><i data-lucide="plus"></i>Add Crew to Project</button>
+        </div>
+
+        <div id="projectCrewList" class="grid gap-3 mt-4"></div>
+
+        <div class="project-calcs mt-5">
+          <div><span>Balance after equipment</span><strong id="calcBalance">LKR 0</strong></div>
+          <div><span>Total crew pay</span><strong id="calcCrew">LKR 0</strong></div>
+          <div><span>Net profit</span><strong id="calcProfit" class="text-ffgreen">LKR 0</strong></div>
+        </div>
+
+        <div class="flex flex-wrap justify-end gap-2 mt-6">
+          <button type="button" class="btn btn-light" data-close="projectModal">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i data-lucide="save"></i>Save Project</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Crew Picker Modal -->
+  <div id="crewPickerModal" class="modal hidden no-print">
+    <div class="modal-card max-w-2xl">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Project Crew</p>
+          <h3>Select Crew Members</h3>
+        </div>
+        <button class="icon-btn" data-close="crewPickerModal"><i data-lucide="x"></i></button>
+      </div>
+      <div id="crewPickerList" class="grid sm:grid-cols-2 gap-3 mt-5"></div>
+      <div class="flex justify-end mt-5">
+        <button class="btn btn-primary" data-close="crewPickerModal">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Report Modal -->
+  <div id="reportModal" class="modal hidden report-modal-shell">
+    <div class="report-toolbar no-print">
+      <div>
+        <p class="eyebrow">Project Report</p>
+        <h3 id="reportModalTitle">Budget Report</h3>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button id="printReportBtn" class="btn btn-light"><i data-lucide="printer"></i>Print</button>
+        <button id="downloadReportBtn" class="btn btn-primary"><i data-lucide="file-down"></i>Download PDF</button>
+        <button class="icon-btn" data-close="reportModal"><i data-lucide="x"></i></button>
+      </div>
+    </div>
+
+    <div class="report-scroll">
+      <div id="reportPaper" class="report-paper"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast no-print"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
