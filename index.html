@@ -61,7 +61,7 @@
         <i data-lucide="hard-drive"></i>
         <div>
           <div class="font-semibold">Local Storage</div>
-          <div class="text-xs text-slate-400">Projects & crew stay on this browser.</div>
+          <div class="text-xs text-slate-400">Firestore cloud + local offline cache.</div>
         </div>
       </div>
     </aside>
@@ -72,7 +72,10 @@
           <p class="text-xs uppercase tracking-[.2em] font-bold text-slate-400">FrameFusion Studio</p>
           <h1 id="pageTitle" class="text-2xl md:text-3xl font-black text-ffnavy">Dashboard</h1>
         </div>
-        <div class="flex flex-wrap gap-2 justify-end">
+        <div class="flex flex-wrap gap-2 justify-end items-center">
+          <span id="cloudStatus" class="cloud-status cloud-status-connecting">
+            <span class="cloud-dot"></span><span>Connecting Firestore</span>
+          </span>
           <button id="quickCrewBtn" class="btn btn-light"><i data-lucide="user-plus"></i> Add Crew</button>
           <button id="quickProjectBtn" class="btn btn-primary"><i data-lucide="plus"></i> New Project</button>
         </div>
@@ -180,7 +183,7 @@
           <div class="grid lg:grid-cols-2 gap-6">
             <div class="panel">
               <div class="panel-head">
-                <div><h3>Export Backup</h3><p>Download all projects and crew as a JSON file.</p></div>
+                <div><h3>Export Backup</h3><p>Download projects, crew and saved signatures as a JSON file.</p></div>
               </div>
               <div class="backup-card">
                 <span class="backup-icon"><i data-lucide="download"></i></span>
@@ -203,7 +206,7 @@
                 <input id="restoreInput" type="file" accept=".json,application/json" class="hidden" />
               </label>
               <div class="mt-4 rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
-                Restoring replaces the current Local Storage data in this browser.
+                Restoring replaces the current local cache and then syncs the restored data to Firestore.
               </div>
             </div>
           </div>
@@ -335,6 +338,14 @@
             <span>Report Subtitle</span>
             <input id="projectSubtitle" placeholder="Official Budget Breakdown & Crew Payment Allocation" />
           </label>
+          <label class="field">
+            <span>Director Name</span>
+            <input id="projectDirectorName" placeholder="e.g. Priyantha Wijerathne" />
+          </label>
+          <label class="field">
+            <span>Manager Name</span>
+            <input id="projectManagerName" placeholder="e.g. Project Manager Name" />
+          </label>
         </div>
 
         <div class="section-divider"></div>
@@ -419,7 +430,20 @@
       </div>
 
       <div class="signature-instructions">
-        Sign inside the box using your finger or stylus.
+        Sign inside the box using your finger or stylus, or reuse a saved Firestore signature.
+      </div>
+
+      <div class="signature-library-panel">
+        <label for="signatureLibrarySelect">Saved Signature</label>
+        <div class="signature-library-row">
+          <select id="signatureLibrarySelect">
+            <option value="">No saved signatures yet</option>
+          </select>
+          <button id="useSavedSignatureBtn" type="button" class="btn btn-light">
+            <i data-lucide="stamp"></i>Use Saved
+          </button>
+        </div>
+        <div id="signatureLibraryHint" class="signature-library-hint"></div>
       </div>
 
       <div class="signature-canvas-wrap">
@@ -437,6 +461,6 @@
 
   <div id="toast" class="toast no-print"></div>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

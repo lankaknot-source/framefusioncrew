@@ -118,3 +118,21 @@ For itemized projects the system automatically:
 - Signature images are cropped and compressed before being saved to Local Storage.
 - All monetary inputs now use a 1-rupee step instead of 100. Values such as 2,340, 5,755, 12,345, etc. are accepted.
 - Updated fields include crew default payment, project revenue, total equipment cost, itemized equipment costs, target company profit, and per-project crew payments.
+
+
+## v6 — Firebase Firestore + Saved Signature Library
+
+- Added the supplied Firebase project configuration (`ffcrew`) directly to the app.
+- Firestore collections:
+  - `framefusion_crew`
+  - `framefusion_projects`
+  - `framefusion_signatures`
+- Firestore is used as the shared cloud database; Local Storage remains as an offline/fallback cache.
+- Existing local data is automatically uploaded when Firestore is empty.
+- Existing Firestore data is loaded on startup when available.
+- Signatures are cropped, resized to a maximum of 650×220, JPEG-compressed, and saved as image data in the Firestore signature library.
+- A Director/Manager only needs to sign once. Next time, open the signature box and select the saved signature from the Firestore list.
+- Added Director Name and Manager Name fields to each project and to the report/PDF signature area.
+- On phone/app screens, Print / Download PDF / Close controls are moved to a fixed bottom action bar so they cannot disappear behind the status bar.
+- Backup files now include saved signatures.
+- See `FIREBASE_SETUP.md` before enabling Firestore access publicly.

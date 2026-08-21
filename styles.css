@@ -571,3 +571,153 @@ body.signature-open{
   }
   .signature-save-btn{min-height:50px}
 }
+
+
+/* v6 — Firestore, reusable signatures, report mobile actions */
+.cloud-status{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  min-height:34px;
+  padding:7px 10px;
+  border:1px solid #dbe4ec;
+  border-radius:999px;
+  background:#fff;
+  color:#64748b;
+  font-size:11px;
+  font-weight:900;
+  white-space:nowrap;
+}
+.cloud-dot{
+  width:8px;
+  height:8px;
+  border-radius:999px;
+  background:#f59e0b;
+}
+.cloud-status-online .cloud-dot{background:#22c55e}
+.cloud-status-online{color:#15803d;background:#f0fdf4;border-color:#bbf7d0}
+.cloud-status-offline .cloud-dot{background:#ef4444}
+.cloud-status-offline{color:#b91c1c;background:#fef2f2;border-color:#fecaca}
+
+.signature-library-panel{
+  padding:0 14px 7px;
+}
+.signature-library-panel>label{
+  display:block;
+  margin-bottom:5px;
+  color:#536176;
+  font-size:11px;
+  font-weight:900;
+}
+.signature-library-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:8px;
+}
+.signature-library-row select{
+  width:100%;
+  min-width:0;
+  height:44px;
+  border:1px solid #d6dee8;
+  border-radius:11px;
+  background:#fff;
+  padding:0 10px;
+  color:#172033;
+  font-size:13px;
+  outline:none;
+}
+.signature-library-row select:focus{
+  border-color:#6fc8ea;
+  box-shadow:0 0 0 3px rgba(17,168,229,.1);
+}
+.signature-library-row .btn{
+  min-height:44px;
+  white-space:nowrap;
+}
+.signature-library-hint{
+  min-height:17px;
+  padding-top:4px;
+  color:#7c899b;
+  font-size:10px;
+  font-weight:700;
+}
+.report-signature-name{
+  font-size:9px;
+  color:#172033;
+  font-weight:950;
+  margin-bottom:.7mm;
+}
+.report-signature-role{
+  font-size:7.5px;
+  color:#66758a;
+  font-weight:850;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+.report-signature-hint{
+  margin-top:1mm;
+}
+
+/* Keep report actions inside the usable screen on phones/app WebView. */
+@media(max-width:767px){
+  .report-modal-shell{
+    padding:0!important;
+    background:#e8edf3;
+  }
+  .report-toolbar{
+    position:fixed!important;
+    top:auto!important;
+    left:0;
+    right:0;
+    bottom:0;
+    z-index:120;
+    min-height:76px;
+    padding:9px 10px calc(9px + env(safe-area-inset-bottom,0px))!important;
+    background:rgba(255,255,255,.98);
+    border-top:1px solid #d8e0e9;
+    border-bottom:0;
+    box-shadow:0 -8px 28px rgba(15,27,49,.12);
+  }
+  .report-toolbar>div:first-child{
+    display:none;
+  }
+  .report-toolbar>div:last-child{
+    display:grid!important;
+    grid-template-columns:1fr 1.35fr 46px;
+    width:100%;
+    gap:7px!important;
+  }
+  .report-toolbar .btn{
+    min-height:50px;
+    padding:8px 8px;
+    font-size:12px;
+  }
+  .report-toolbar .icon-btn{
+    width:46px;
+    height:50px;
+  }
+  .report-scroll{
+    padding:10px 10px calc(96px + env(safe-area-inset-bottom,0px))!important;
+  }
+  .report-open .sidebar,
+  .report-open .topbar{
+    display:none!important;
+  }
+  .report-open{
+    padding-bottom:0!important;
+  }
+  .signature-library-row{
+    grid-template-columns:1fr;
+  }
+  .signature-library-row .btn{
+    width:100%;
+  }
+}
+@media(max-height:700px){
+  .signature-library-panel{padding-bottom:3px}
+  .signature-library-row select{height:40px}
+  .signature-library-row .btn{min-height:40px}
+  .signature-canvas-wrap{
+    margin-top:4px!important;
+  }
+}

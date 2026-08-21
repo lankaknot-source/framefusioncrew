@@ -1,11 +1,45 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
+import {
+  getFirestore,
+  collection,
+  getDocs,
+  doc,
+  setDoc,
+  deleteDoc
+} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA0vt0PLITxer_pn7mbGmJpq_vHq9D6E-Q",
+  authDomain: "ffcrew.firebaseapp.com",
+  projectId: "ffcrew",
+  storageBucket: "ffcrew.firebasestorage.app",
+  messagingSenderId: "627390956940",
+  appId: "1:627390956940:web:108aa66c5ce7456b8702a9"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+
 
 const STORAGE_KEYS = {
   crew: "framefusion_crew_v1",
-  projects: "framefusion_projects_v1"
+  projects: "framefusion_projects_v1",
+  signatures: "framefusion_signatures_v1"
+};
+
+const CLOUD_COLLECTIONS = {
+  crew: "framefusion_crew",
+  projects: "framefusion_projects",
+  signatures: "framefusion_signatures"
 };
 
 let crew = load(STORAGE_KEYS.crew, []);
 let projects = load(STORAGE_KEYS.projects, []);
+let signatureLibrary = load(STORAGE_KEYS.signatures, []);
+let cloudReady = false;
+let cloudSyncTimer = null;
+let cloudSyncInFlight = false;
+let cloudSyncPending = false;
 let editingProjectCrew = [];
 let editingEquipmentItems = [];
 let activeReportProjectId = null;
@@ -20,9 +54,122 @@ function load(key, fallback){
     return raw ? JSON.parse(raw) : fallback;
   }catch(e){ return fallback; }
 }
-function save(){
+function saveLocalCache(){
   localStorage.setItem(STORAGE_KEYS.crew, JSON.stringify(crew));
   localStorage.setItem(STORAGE_KEYS.projects, JSON.stringify(projects));
+  localStorage.setItem(STORAGE_KEYS.signatures, JSON.stringify(signatureLibrary));
+}
+function save(){
+  saveLocalCache();
+  scheduleCloudSync();
+}
+function setCloudStatus(state,label){
+  const el=document.getElementById("cloudStatus");
+  if(!el) return;
+  el.classList.remove("cloud-status-connecting","cloud-status-online","cloud-status-offline");
+  el.classList.add(`cloud-status-${state}`);
+  const text=el.querySelector("span:last-child");
+  if(text) text.textContent=label;
+}
+function cleanForFirestore(value){
+  return JSON.parse(JSON.stringify(value));
+}
+async function readCloudCollection(collectionName){
+  const snap=await getDocs(collection(db,collectionName));
+  return snap.docs.map(d=>({id:d.id,...d.data()}));
+}
+async function syncOneCollection(collectionName,items){
+  const remote=await getDocs(collection(db,collectionName));
+  const localIds=new Set(items.map(item=>String(item.id)));
+  const writes=items.map(item=>{
+    const payload=cleanForFirestore(item);
+    delete payload.id;
+    return setDoc(doc(db,collectionName,String(item.id)),payload);
+  });
+  const deletes=[];
+  remote.forEach(remoteDoc=>{
+    if(!localIds.has(remoteDoc.id)){
+      deletes.push(deleteDoc(doc(db,collectionName,remoteDoc.id)));
+    }
+  });
+  await Promise.all([...writes,...deletes]);
+}
+async function syncAllToFirestore(){
+  if(!cloudReady){
+    cloudSyncPending=true;
+    return;
+  }
+  if(cloudSyncInFlight){
+    cloudSyncPending=true;
+    return;
+  }
+  cloudSyncInFlight=true;
+  cloudSyncPending=false;
+  setCloudStatus("connecting","Syncing Firestore");
+  try{
+    await Promise.all([
+      syncOneCollection(CLOUD_COLLECTIONS.crew,crew),
+      syncOneCollection(CLOUD_COLLECTIONS.projects,projects),
+      syncOneCollection(CLOUD_COLLECTIONS.signatures,signatureLibrary)
+    ]);
+    setCloudStatus("online","Firestore Synced");
+  }catch(error){
+    console.error("Firestore sync failed:",error);
+    setCloudStatus("offline","Firestore Offline");
+  }finally{
+    cloudSyncInFlight=false;
+    if(cloudSyncPending){
+      cloudSyncPending=false;
+      setTimeout(syncAllToFirestore,300);
+    }
+  }
+}
+function scheduleCloudSync(){
+  if(!cloudReady){
+    cloudSyncPending=true;
+    return;
+  }
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer=setTimeout(syncAllToFirestore,550);
+}
+async function initializeFirestoreData(){
+  setCloudStatus("connecting","Connecting Firestore");
+  try{
+    const [cloudCrew,cloudProjects,cloudSignatures]=await Promise.all([
+      readCloudCollection(CLOUD_COLLECTIONS.crew),
+      readCloudCollection(CLOUD_COLLECTIONS.projects),
+      readCloudCollection(CLOUD_COLLECTIONS.signatures)
+    ]);
+
+    const cloudHasData=cloudCrew.length || cloudProjects.length || cloudSignatures.length;
+    if(cloudHasData){
+      crew=cloudCrew;
+      projects=cloudProjects;
+      signatureLibrary=cloudSignatures;
+      saveLocalCache();
+    }
+
+    cloudReady=true;
+
+    if(!crew.length && !projects.length){
+      seedDemo();
+    }else if(!cloudHasData){
+      await syncAllToFirestore();
+    }
+
+    renderDashboard();
+    renderProjects();
+    renderCrew();
+    setCloudStatus("online","Firestore Connected");
+  }catch(error){
+    console.error("Firestore connection failed:",error);
+    cloudReady=false;
+    setCloudStatus("offline","Using Local Cache");
+    if(!crew.length && !projects.length) seedDemo();
+    renderDashboard();
+    renderProjects();
+    renderCrew();
+  }
 }
 function uid(prefix="id"){
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
@@ -46,8 +193,14 @@ function toast(msg){
   clearTimeout(window.__toastTimer);
   window.__toastTimer = setTimeout(()=>el.classList.remove("show"),2200);
 }
-function openModal(id){ document.getElementById(id).classList.remove("hidden"); }
-function closeModal(id){ document.getElementById(id).classList.add("hidden"); }
+function openModal(id){
+  document.getElementById(id).classList.remove("hidden");
+  if(id==="reportModal") document.body.classList.add("report-open");
+}
+function closeModal(id){
+  document.getElementById(id).classList.add("hidden");
+  if(id==="reportModal") document.body.classList.remove("report-open");
+}
 
 function seedDemo(){
   if(crew.length || projects.length) return;
@@ -71,6 +224,10 @@ function seedDemo(){
     equipmentItems:[],
     targetProfit:12000,
     subtitle:"Official Budget Breakdown & Crew Payment Allocation",
+    directorName:"",
+    managerName:"",
+    signatures:{director:"",manager:""},
+    signatureRefs:{director:"",manager:""},
     crew:crew.map(c=>({crewId:c.id,name:c.name,role:c.role,payment:c.rate})),
     createdAt:Date.now(),
     updatedAt:Date.now()
@@ -243,6 +400,8 @@ function resetProjectForm(){
   document.getElementById("projectModalTitle").textContent="Create Project";
   document.getElementById("projectName").value="Match Live Coverage Budget";
   document.getElementById("projectSubtitle").value="Official Budget Breakdown & Crew Payment Allocation";
+  document.getElementById("projectDirectorName").value="";
+  document.getElementById("projectManagerName").value="";
   document.getElementById("projectEquipment").value="";
   editingProjectCrew=[];
   editingEquipmentItems=[];
@@ -269,6 +428,8 @@ function editProject(id){
   renderEquipmentItems();
   document.getElementById("projectTargetProfit").value=p.targetProfit||0;
   document.getElementById("projectSubtitle").value=p.subtitle||"";
+  document.getElementById("projectDirectorName").value=p.directorName||"";
+  document.getElementById("projectManagerName").value=p.managerName||"";
   editingProjectCrew=JSON.parse(JSON.stringify(p.crew||[]));
   document.getElementById("projectModalTitle").textContent="Edit Project";
   renderProjectCrewRows(); updateProjectCalcs(); openModal("projectModal");
@@ -419,23 +580,101 @@ function projectSignatures(p){
 function signatureRoleLabel(role){
   return role==="manager" ? "Manager" : "Director";
 }
+function signerNameForRole(p,role){
+  const value=role==="manager" ? p?.managerName : p?.directorName;
+  return String(value||"").trim() || signatureRoleLabel(role);
+}
 function signatureCardHtml(p,role){
   const signatures=projectSignatures(p);
   const value=signatures[role]||"";
-  const label=signatureRoleLabel(role);
+  const roleLabel=signatureRoleLabel(role);
+  const signerName=signerNameForRole(p,role);
   return `
     <div class="report-signature-card" role="button" tabindex="0"
          onclick="openSignaturePad('${role}')"
          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openSignaturePad('${role}')}"
-         aria-label="${label} signature">
+         aria-label="${escapeHtml(roleLabel)} signature">
       ${value
-        ? `<img class="report-signature-image" src="${value}" alt="${label} signature" />`
+        ? `<img class="report-signature-image" src="${value}" alt="${escapeHtml(roleLabel)} signature" />`
         : `<div class="report-signature-empty">Tap to Sign</div>`}
       <div class="report-signature-line">
-        <div class="report-signature-role">${label}</div>
-        <div class="report-signature-hint">${value ? "Tap to replace signature" : "Tap here to sign"}</div>
+        <div class="report-signature-name">${escapeHtml(signerName)}</div>
+        <div class="report-signature-role">${escapeHtml(roleLabel)}</div>
+        <div class="report-signature-hint">${value ? "Tap to replace / choose saved signature" : "Tap here to sign / choose saved signature"}</div>
       </div>
     </div>`;
+}
+function matchingSignatureLibrary(role){
+  const sameRole=signatureLibrary.filter(sig=>sig.role===role);
+  return (sameRole.length ? sameRole : signatureLibrary)
+    .slice()
+    .sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
+}
+function renderSignatureLibraryPicker(){
+  const select=document.getElementById("signatureLibrarySelect");
+  const button=document.getElementById("useSavedSignatureBtn");
+  const hint=document.getElementById("signatureLibraryHint");
+  if(!select||!button) return;
+  const list=matchingSignatureLibrary(activeSignatureRole);
+  if(!list.length){
+    select.innerHTML='<option value="">No saved signatures yet</option>';
+    select.disabled=true;
+    button.disabled=true;
+    if(hint) hint.textContent="Draw and save once. It will appear here next time.";
+    return;
+  }
+  select.disabled=false;
+  button.disabled=false;
+  select.innerHTML='<option value="">Choose a saved signature...</option>'+
+    list.map(sig=>`<option value="${escapeHtml(sig.id)}">${escapeHtml(sig.name||signatureRoleLabel(sig.role))} — ${escapeHtml(signatureRoleLabel(sig.role))}</option>`).join("");
+  if(hint) hint.textContent=`${list.length} saved signature${list.length===1?"":"s"} available from Firestore.`;
+}
+function findReusableSignature(role,personName){
+  const normalized=String(personName||"").trim().toLowerCase();
+  return signatureLibrary.find(sig=>
+    sig.role===role && String(sig.name||"").trim().toLowerCase()===normalized
+  ) || null;
+}
+function saveSignatureToLibrary(role,personName,imageData){
+  const safeName=String(personName||"").trim() || signatureRoleLabel(role);
+  let item=findReusableSignature(role,safeName);
+  if(item){
+    item.imageData=imageData;
+    item.updatedAt=Date.now();
+  }else{
+    item={
+      id:uid("signature"),
+      role,
+      name:safeName,
+      imageData,
+      createdAt:Date.now(),
+      updatedAt:Date.now()
+    };
+    signatureLibrary.push(item);
+  }
+  return item;
+}
+function useSelectedSignature(){
+  const p=projects.find(x=>x.id===activeReportProjectId);
+  const select=document.getElementById("signatureLibrarySelect");
+  if(!p||!activeSignatureRole||!select?.value) return;
+  const savedSig=signatureLibrary.find(sig=>sig.id===select.value);
+  if(!savedSig||!savedSig.imageData){
+    toast("Saved signature not found");
+    return;
+  }
+  p.signatures={...(p.signatures||{}),[activeSignatureRole]:savedSig.imageData};
+  p.signatureRefs={...(p.signatureRefs||{}),[activeSignatureRole]:savedSig.id};
+  if(activeSignatureRole==="director" && !String(p.directorName||"").trim()) p.directorName=savedSig.name||"";
+  if(activeSignatureRole==="manager" && !String(p.managerName||"").trim()) p.managerName=savedSig.name||"";
+  p.updatedAt=Date.now();
+  save();
+  const label=signatureRoleLabel(activeSignatureRole);
+  closeSignaturePad();
+  document.getElementById("reportPaper").innerHTML=reportHtml(p);
+  renderProjects();
+  renderDashboard();
+  toast(`${label} saved signature applied`);
 }
 function openSignaturePad(role){
   const p=projects.find(x=>x.id===activeReportProjectId);
@@ -449,6 +688,7 @@ function openSignaturePad(role){
   modal.classList.remove("hidden");
   modal.setAttribute("aria-hidden","false");
   document.body.classList.add("signature-open");
+  renderSignatureLibraryPicker();
   requestAnimationFrame(()=>{
     setupSignatureCanvas();
     lucide.createIcons();
@@ -578,8 +818,8 @@ function trimmedSignatureDataUrl(){
   const cropH=maxY-minY+1;
 
   // Keep signatures compact so many projects can safely stay in Local Storage.
-  const maxW=900;
-  const maxH=320;
+  const maxW=650;
+  const maxH=220;
   const scale=Math.min(1,maxW/cropW,maxH/cropH);
   const outW=Math.max(1,Math.round(cropW*scale));
   const outH=Math.max(1,Math.round(cropH*scale));
@@ -592,7 +832,7 @@ function trimmedSignatureDataUrl(){
   octx.fillRect(0,0,outW,outH);
   octx.drawImage(source,minX,minY,cropW,cropH,0,0,outW,outH);
 
-  return out.toDataURL("image/jpeg",0.78);
+  return out.toDataURL("image/jpeg",0.72);
 }
 function saveSignatureFromPad(){
   const p=projects.find(x=>x.id===activeReportProjectId);
@@ -606,7 +846,10 @@ function saveSignatureFromPad(){
     toast("Please add a signature first");
     return;
   }
+  const personName=signerNameForRole(p,activeSignatureRole);
+  const libraryItem=saveSignatureToLibrary(activeSignatureRole,personName,dataUrl);
   p.signatures={...(p.signatures||{}),[activeSignatureRole]:dataUrl};
+  p.signatureRefs={...(p.signatureRefs||{}),[activeSignatureRole]:libraryItem.id};
   p.updatedAt=Date.now();
   save();
   const roleLabel=signatureRoleLabel(activeSignatureRole);
@@ -614,7 +857,7 @@ function saveSignatureFromPad(){
   document.getElementById("reportPaper").innerHTML=reportHtml(p);
   renderProjects();
   renderDashboard();
-  toast(`${roleLabel} signature saved`);
+  toast(`${roleLabel} signature saved to Firestore library`);
 }
 function loadDataImage(src){
   return new Promise((resolve,reject)=>{
@@ -929,9 +1172,10 @@ function drawCrewTablePage(ctx,p,rows,W,margin,y,showTotal){
 }
 
 
-function drawSignatureArea(ctx,role,img,x,y,w,h){
+function drawSignatureArea(ctx,p,role,img,x,y,w,h){
   const label=signatureRoleLabel(role);
-  const imageH=h-58;
+  const signerName=signerNameForRole(p,role);
+  const imageH=h-66;
   if(img){
     const pad=16;
     const ratio=Math.min((w-pad*2)/img.width,(imageH-pad)/img.height);
@@ -958,16 +1202,19 @@ function drawSignatureArea(ctx,role,img,x,y,w,h){
   ctx.stroke();
   ctx.textAlign="center";
   ctx.fillStyle="#172033";
-  ctx.font="900 18px Arial";
-  ctx.fillText(label,x+w/2,y+imageH+34);
+  ctx.font="900 17px Arial";
+  ctx.fillText(truncateCanvasText(ctx,signerName,w-16),x+w/2,y+imageH+31);
+  ctx.fillStyle="#66758a";
+  ctx.font="800 13px Arial";
+  ctx.fillText(label.toUpperCase(),x+w/2,y+imageH+52);
   ctx.textAlign="left";
 }
 function drawApprovalSignatures(ctx,p,directorImg,managerImg,W,margin,y){
   const gap=90;
   const w=(W-margin*2-gap)/2;
-  const h=190;
-  drawSignatureArea(ctx,"director",directorImg,margin,y,w,h);
-  drawSignatureArea(ctx,"manager",managerImg,margin+w+gap,y,w,h);
+  const h=200;
+  drawSignatureArea(ctx,p,"director",directorImg,margin,y,w,h);
+  drawSignatureArea(ctx,p,"manager",managerImg,margin+w+gap,y,w,h);
   return y+h;
 }
 
@@ -1221,7 +1468,7 @@ async function downloadActiveReport(){
 
 
 function exportBackup(){
-  const data={app:"FrameFusion Studio Budget & Crew Manager",version:1,exportedAt:new Date().toISOString(),crew,projects};
+  const data={app:"FrameFusion Studio Budget & Crew Manager",version:2,exportedAt:new Date().toISOString(),crew,projects,signatureLibrary};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
@@ -1236,15 +1483,20 @@ function restoreBackup(file){
       const data=JSON.parse(r.result);
       if(!Array.isArray(data.crew)||!Array.isArray(data.projects)) throw new Error("Invalid backup");
       if(!confirm("Restore this backup and replace current local data?")) return;
-      crew=data.crew;projects=data.projects;save();renderDashboard();renderProjects();renderCrew();toast("Backup restored");
+      crew=data.crew;
+      projects=data.projects;
+      signatureLibrary=Array.isArray(data.signatureLibrary)?data.signatureLibrary:[];
+      save();
+      renderDashboard();renderProjects();renderCrew();
+      toast("Backup restored and queued for Firestore sync");
     }catch(e){ alert("Invalid FrameFusion backup file."); }
   };
   r.readAsText(file);
 }
 
 document.addEventListener("DOMContentLoaded",()=>{
-  seedDemo();
   setView("dashboard");
+  initializeFirestoreData();
 
   document.querySelectorAll(".nav-btn").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
   document.querySelectorAll("[data-jump]").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.jump)));
@@ -1297,6 +1549,10 @@ document.addEventListener("DOMContentLoaded",()=>{
         : Number(document.getElementById("projectEquipment").value||0),
       targetProfit:Number(document.getElementById("projectTargetProfit").value||0),
       subtitle:document.getElementById("projectSubtitle").value.trim(),
+      directorName:document.getElementById("projectDirectorName").value.trim(),
+      managerName:document.getElementById("projectManagerName").value.trim(),
+      signatures:JSON.parse(JSON.stringify(old?.signatures||{director:"",manager:""})),
+      signatureRefs:JSON.parse(JSON.stringify(old?.signatureRefs||{director:"",manager:""})),
       crew:JSON.parse(JSON.stringify(editingProjectCrew)),
       createdAt:old?.createdAt||Date.now(),
       updatedAt:Date.now()
@@ -1321,6 +1577,7 @@ document.addEventListener("DOMContentLoaded",()=>{
   document.getElementById("signatureClearBtn").addEventListener("click",clearSignatureCanvas);
   document.getElementById("signatureCancelBtn").addEventListener("click",closeSignaturePad);
   document.getElementById("signatureSaveBtn").addEventListener("click",saveSignatureFromPad);
+  document.getElementById("useSavedSignatureBtn").addEventListener("click",useSelectedSignature);
 
   document.getElementById("exportBackupBtn").addEventListener("click",exportBackup);
   document.getElementById("restoreInput").addEventListener("change",e=>restoreBackup(e.target.files[0]));
@@ -1339,6 +1596,7 @@ window.duplicateProject=duplicateProject;
 window.deleteProject=deleteProject;
 window.openReport=openReport;
 window.openSignaturePad=openSignaturePad;
+window.useSelectedSignature=useSelectedSignature;
 window.updateEquipmentName=updateEquipmentName;
 window.updateEquipmentCost=updateEquipmentCost;
 window.removeEquipmentItem=removeEquipmentItem;
