@@ -1076,3 +1076,26 @@ body.signature-open{
     min-width:720px;
   }
 }
+
+
+/* v12 — Rental balance payments */
+.rental-action-stack{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:7px;
+  flex-wrap:wrap;
+}
+.btn-compact{
+  padding:8px 10px!important;
+  min-height:36px;
+  font-size:11px!important;
+  white-space:nowrap;
+}
+@media(max-width:767px){
+  #rentalBalanceModal .modal-card{
+    width:calc(100% - 24px);
+    max-height:calc(100dvh - 32px);
+    overflow:auto;
+  }
+}

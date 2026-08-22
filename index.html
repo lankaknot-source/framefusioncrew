@@ -747,6 +747,64 @@
     </div>
   </div>
 
+
+  <!-- Rental Balance Payment Modal -->
+  <div id="rentalBalanceModal" class="modal hidden no-print">
+    <div class="modal-card max-w-2xl">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Rental Supplier Payment</p>
+          <h3 id="rentalBalanceModalTitle">Pay Rental Balance</h3>
+        </div>
+        <button class="icon-btn" data-close="rentalBalanceModal"><i data-lucide="x"></i></button>
+      </div>
+
+      <input id="rentalBalanceRentalId" type="hidden" />
+
+      <div id="rentalBalanceSummary" class="payment-summary mt-5"></div>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-5">
+        <label class="field">
+          <span>Amount Paid Now (LKR) *</span>
+          <input id="rentalBalanceAmount" type="number" min="1" step="1" inputmode="numeric" />
+        </label>
+
+        <label class="field">
+          <span>Payment Date *</span>
+          <input id="rentalBalanceDate" type="date" />
+        </label>
+
+        <label class="field">
+          <span>Payment Method</span>
+          <select id="rentalBalanceMethod">
+            <option>Bank Transfer</option>
+            <option>Cash</option>
+            <option>Cheque</option>
+            <option>Card</option>
+            <option>Other</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Supplier Email *</span>
+          <input id="rentalBalanceEmail" type="email" placeholder="supplier@example.com" />
+        </label>
+
+        <label class="field md:col-span-2">
+          <span>Note / Reference</span>
+          <input id="rentalBalanceNote" placeholder="Bank reference, cheque no, balance payment..." />
+        </label>
+      </div>
+
+      <div class="flex flex-wrap justify-end gap-2 mt-6">
+        <button type="button" class="btn btn-light" data-close="rentalBalanceModal">Cancel</button>
+        <button id="saveRentalBalanceBtn" type="button" class="btn btn-primary">
+          <i data-lucide="badge-dollar-sign"></i>Save Balance Payment & Email Receipt
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Report Modal -->
   <div id="reportModal" class="modal hidden report-modal-shell">
     <div class="report-toolbar no-print">

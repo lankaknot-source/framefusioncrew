@@ -224,3 +224,23 @@ Important correction:
 - At narrower laptop/tablet widths, Rental Payments automatically stacks form and history vertically.
 - Mobile rental form fields switch to a clean single-column layout.
 - Financial page received the same min-width/grid protection so Project Profit/Loss tables do not squeeze the summary card.
+
+
+## v12 — Rental Partial / Balance Payments
+
+- PARTIAL rental expenses now show a **Pay Balance** button.
+- Balance-payment modal automatically shows:
+  - total rental cost,
+  - amount already paid,
+  - remaining balance.
+- The amount field defaults to the full remaining balance but can be changed for another partial payment.
+- A rental can now have multiple payment entries.
+- Every additional rental payment receives a new `FF-RNT-...` receipt number.
+- Every additional payment sends a fresh EmailJS receipt to the supplier.
+- Email receipt values now correctly show:
+  - `Amount` = current payment,
+  - `Total Paid` = all rental payments combined,
+  - `Balance` = amount still payable after the current payment.
+- Rental Expense History shows cumulative Paid, Remaining Balance, payment count, and latest receipt.
+- Financial calculations now use cumulative rental payments, so second/third balance payments are counted correctly.
+- Existing older rental records are automatically migrated into the new multi-payment structure.

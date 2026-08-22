@@ -207,6 +207,7 @@ async function initializeFirestoreData(){
     }
 
     migrateRentalExpenseRecords();
+    migrateRentalPaymentArrays();
     cloudReady=true;
 
     if(!crew.length && !projects.length){
@@ -228,6 +229,7 @@ async function initializeFirestoreData(){
     setCloudStatus("offline","Using Local Cache");
     if(!crew.length && !projects.length) seedDemo();
     migrateRentalExpenseRecords();
+    migrateRentalPaymentArrays();
     renderDashboard();
     renderProjects();
     renderCrew();
@@ -1156,8 +1158,18 @@ function rentalStatus(total,paid){
   if(p>0) return "PARTIAL";
   return "UNPAID";
 }
+function rentalPaymentsTotal(item){
+  if(Array.isArray(item?.payments) && item.payments.length){
+    return item.payments.reduce((sum,p)=>sum+Number(p.amount||0),0);
+  }
+  return Math.max(0,Number(item?.paidAmount||0));
+}
+function rentalPaymentCount(item){
+  if(Array.isArray(item?.payments) && item.payments.length) return item.payments.length;
+  return Number(item?.paidAmount||0)>0 ? 1 : 0;
+}
 function rentalBalance(item){
-  return Math.max(0,Number(item.totalAmount||0)-Number(item.paidAmount||0));
+  return Math.max(0,Number(item.totalAmount||0)-rentalPaymentsTotal(item));
 }
 function rentalReceiptNo(){
   const d=new Date();
@@ -1170,6 +1182,39 @@ function rentalProjectName(item){
   if(!item.projectId) return "General / No Project";
   const p=projects.find(x=>x.id===item.projectId);
   return p?.name || item.projectName || "Project";
+}
+function ensureRentalPayments(item){
+  if(!item) return [];
+  if(!Array.isArray(item.payments)) item.payments=[];
+  if(!item.payments.length && Number(item.paidAmount||0)>0){
+    item.payments.push({
+      id:uid("rentalpay"),
+      receiptNo:item.receiptNo||rentalReceiptNo(),
+      amount:Number(item.paidAmount||0),
+      date:item.paymentDate||todayInputValue(),
+      method:item.paymentMethod||"Bank Transfer",
+      email:item.supplierEmail||"",
+      note:item.note||"",
+      status:rentalStatus(item.totalAmount,item.paidAmount),
+      emailSent:!!item.emailSent,
+      emailSentAt:Number(item.emailSentAt||0),
+      emailError:item.emailError||"",
+      createdAt:Number(item.createdAt||Date.now())
+    });
+  }
+  return item.payments;
+}
+function migrateRentalPaymentArrays(){
+  let changed=false;
+  rentals.forEach(item=>{
+    const before=Array.isArray(item.payments)?item.payments.length:-1;
+    ensureRentalPayments(item);
+    const total=rentalPaymentsTotal(item);
+    item.paidAmount=total;
+    item.status=rentalStatus(item.totalAmount,total);
+    if(before!==item.payments.length) changed=true;
+  });
+  if(changed) saveLocalCache();
 }
 function renderRentalProjectOptions(){
   const select=document.getElementById("rentalProjectId");
@@ -1193,22 +1238,24 @@ function renderRentalLiveSummary(){
     <div><span>Paid by FrameFusion</span><strong class="balance-value">${money(paid)}</strong></div>
     <div><span>Still Payable</span><strong class="${balance>0?"balance-value":"paid-value"}">${money(balance)}</strong></div>`;
 }
-function rentalEmailParams(item){
+function rentalEmailParams(item,payment){
+  const totalPaid=rentalPaymentsTotal(item);
+  const amount=Number(payment?.amount||0);
   return {
-    to_email:item.supplierEmail,
-    receipt_no:item.receiptNo,
-    status:item.status,
-    payment_date:item.paymentDate,
+    to_email:payment?.email||item.supplierEmail,
+    receipt_no:payment?.receiptNo||item.receiptNo||"",
+    status:rentalStatus(item.totalAmount,totalPaid),
+    payment_date:payment?.date||item.paymentDate||todayInputValue(),
     project_name:`${rentalProjectName(item)} - ${item.itemName}`,
     person_name:item.supplierName,
     payment_type:"Rental Expense Payment",
-    payment_method:item.paymentMethod,
-    amount:Number(item.paidAmount||0).toLocaleString("en-LK"),
-    total_paid:Number(item.paidAmount||0).toLocaleString("en-LK"),
+    payment_method:payment?.method||item.paymentMethod||"Bank Transfer",
+    amount:amount.toLocaleString("en-LK"),
+    total_paid:totalPaid.toLocaleString("en-LK"),
     balance:rentalBalance(item).toLocaleString("en-LK"),
     note:[
       `Paid by FrameFusion Studio`,
-      item.note||"",
+      payment?.note||item.note||"",
       `Rented item/service: ${item.itemName}`,
       `Qty: ${Number(item.quantity||1)}`,
       item.startDate||item.endDate ? `Rental period: ${item.startDate||"—"} to ${item.endDate||"—"}` : "",
@@ -1216,8 +1263,14 @@ function rentalEmailParams(item){
     ].filter(Boolean).join(" | ")
   };
 }
-async function sendRentalReceiptEmail(item){
-  if(!isEmail(item.supplierEmail)) return {ok:false,error:"Valid supplier email is required."};
+async function sendRentalReceiptEmail(item,payment){
+  const target=payment || ensureRentalPayments(item).slice(-1)[0];
+  if(!target) return {ok:false,error:"Rental payment record not found."};
+  const email=normalizedEmail(target.email||item.supplierEmail);
+  if(!isEmail(email)) return {ok:false,error:"Valid supplier email is required."};
+  target.email=email;
+  item.supplierEmail=email;
+
   try{
     const response=await fetch("https://api.emailjs.com/api/v1.0/email/send",{
       method:"POST",
@@ -1226,26 +1279,34 @@ async function sendRentalReceiptEmail(item){
         service_id:EMAILJS_CONFIG.serviceId,
         template_id:EMAILJS_CONFIG.templateId,
         user_id:EMAILJS_CONFIG.publicKey,
-        template_params:rentalEmailParams(item)
+        template_params:rentalEmailParams(item,target)
       })
     });
     if(!response.ok){
       const message=(await response.text()).trim()||`EmailJS error ${response.status}`;
       throw new Error(message);
     }
+    target.emailSent=true;
+    target.emailSentAt=Date.now();
+    target.emailError="";
     item.emailSent=true;
-    item.emailSentAt=Date.now();
+    item.emailSentAt=target.emailSentAt;
     item.emailError="";
+    item.receiptNo=target.receiptNo;
+    item.paymentDate=target.date;
+    item.paymentMethod=target.method;
     item.updatedAt=Date.now();
     save();
     return {ok:true};
   }catch(error){
     console.error("Rental receipt email failed:",error);
+    target.emailSent=false;
+    target.emailError=error?.message||"Email send failed";
     item.emailSent=false;
-    item.emailError=error?.message||"Email send failed";
+    item.emailError=target.emailError;
     item.updatedAt=Date.now();
     save();
-    return {ok:false,error:item.emailError};
+    return {ok:false,error:target.emailError};
   }
 }
 async function saveRentalPayment(){
@@ -1270,22 +1331,35 @@ async function saveRentalPayment(){
   if(!itemName){toast("Enter rented equipment / service");return;}
   if(totalAmount<=0){toast("Enter total rental cost");return;}
   if(paidAmount<=0){toast("Enter amount paid");return;}
-  if(paidAmount>totalAmount){
-    toast("Amount paid cannot be greater than total rental cost");
-    return;
-  }
+  if(paidAmount>totalAmount){toast("Amount paid cannot be greater than total rental cost");return;}
+
+  const receiptNo=rentalReceiptNo();
+  const payment={
+    id:uid("rentalpay"),
+    receiptNo,
+    amount:paidAmount,
+    date:paymentDate,
+    method:paymentMethod,
+    email:supplierEmail,
+    note,
+    status:rentalStatus(totalAmount,paidAmount),
+    emailSent:false,emailSentAt:0,emailError:"",
+    createdAt:Date.now()
+  };
 
   const item={
     id:uid("rental"),
-    receiptNo:rentalReceiptNo(),
+    receiptNo,
     projectId,projectName,
     supplierName,supplierEmail,supplierPhone,
     itemName,quantity,totalAmount,paidAmount,
     paymentDate,startDate,endDate,paymentMethod,depositAmount,note,
+    payments:[payment],
     status:rentalStatus(totalAmount,paidAmount),
     emailSent:false,emailSentAt:0,emailError:"",
     createdAt:Date.now(),updatedAt:Date.now()
   };
+
   rentals.unshift(item);
   save();
   renderRentals();
@@ -1295,21 +1369,113 @@ async function saveRentalPayment(){
   document.getElementById("rentalNote").value="";
   renderRentalLiveSummary();
 
-  const result=await sendRentalReceiptEmail(item);
+  const result=await sendRentalReceiptEmail(item,payment);
   renderRentals();
-  toast(result.ok ? `Rental expense saved. Receipt ${item.receiptNo} emailed.` : `Rental expense saved. ${result.error}`);
+  renderFinancial();
+  toast(result.ok ? `Rental expense saved. Receipt ${payment.receiptNo} emailed.` : `Rental expense saved. ${result.error}`);
+}
+function openRentalBalancePayment(id){
+  const item=rentals.find(x=>x.id===id);
+  if(!item) return;
+  ensureRentalPayments(item);
+
+  const total=Number(item.totalAmount||0);
+  const paid=rentalPaymentsTotal(item);
+  const balance=Math.max(0,total-paid);
+
+  if(balance<=0){
+    toast("This rental is already fully paid");
+    return;
+  }
+
+  document.getElementById("rentalBalanceRentalId").value=item.id;
+  document.getElementById("rentalBalanceModalTitle").textContent=`Pay ${item.supplierName} Balance`;
+  document.getElementById("rentalBalanceAmount").value=balance;
+  document.getElementById("rentalBalanceDate").value=todayInputValue();
+  document.getElementById("rentalBalanceMethod").value=item.paymentMethod||"Bank Transfer";
+  document.getElementById("rentalBalanceEmail").value=item.supplierEmail||"";
+  document.getElementById("rentalBalanceNote").value="";
+
+  document.getElementById("rentalBalanceSummary").innerHTML=`
+    <div><span>Total Rental Cost</span><strong>${money(total)}</strong></div>
+    <div><span>Already Paid</span><strong class="paid-value">${money(paid)}</strong></div>
+    <div><span>Balance</span><strong class="balance-value">${money(balance)}</strong></div>`;
+
+  openModal("rentalBalanceModal");
+  lucide.createIcons();
+}
+async function saveRentalBalancePayment(){
+  const id=document.getElementById("rentalBalanceRentalId").value;
+  const item=rentals.find(x=>x.id===id);
+  if(!item){toast("Rental record not found");return;}
+
+  ensureRentalPayments(item);
+
+  const amount=Number(document.getElementById("rentalBalanceAmount").value||0);
+  const date=document.getElementById("rentalBalanceDate").value||todayInputValue();
+  const method=document.getElementById("rentalBalanceMethod").value||"Bank Transfer";
+  const email=normalizedEmail(document.getElementById("rentalBalanceEmail").value);
+  const note=document.getElementById("rentalBalanceNote").value.trim();
+
+  const before=rentalPaymentsTotal(item);
+  const balanceBefore=Math.max(0,Number(item.totalAmount||0)-before);
+
+  if(amount<=0){toast("Enter the amount paid");return;}
+  if(amount>balanceBefore){toast(`Maximum balance is ${money(balanceBefore)}`);return;}
+  if(!isEmail(email)){toast("Enter a valid supplier email");return;}
+
+  const after=before+amount;
+  const status=rentalStatus(item.totalAmount,after);
+  const receiptNo=rentalReceiptNo();
+
+  const payment={
+    id:uid("rentalpay"),
+    receiptNo,
+    amount,
+    date,
+    method,
+    email,
+    note,
+    status,
+    emailSent:false,emailSentAt:0,emailError:"",
+    createdAt:Date.now()
+  };
+
+  item.payments.push(payment);
+  item.supplierEmail=email;
+  item.paidAmount=after;
+  item.status=status;
+  item.receiptNo=receiptNo;
+  item.paymentDate=date;
+  item.paymentMethod=method;
+  item.updatedAt=Date.now();
+
+  save();
+  closeModal("rentalBalanceModal");
+  renderRentals();
+  renderFinancial();
+
+  const result=await sendRentalReceiptEmail(item,payment);
+  renderRentals();
+  renderFinancial();
+  toast(result.ok
+    ? `Balance payment saved as ${status}. Receipt ${receiptNo} emailed.`
+    : `Balance payment saved. ${result.error}`);
 }
 async function resendRentalReceipt(id){
   const item=rentals.find(x=>x.id===id);
   if(!item) return;
-  const result=await sendRentalReceiptEmail(item);
+  const payments=ensureRentalPayments(item);
+  const latest=payments.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))[0];
+  if(!latest){toast("No rental payment receipt found");return;}
+  const result=await sendRentalReceiptEmail(item,latest);
   renderRentals();
-  toast(result.ok ? `Receipt ${item.receiptNo} emailed again` : result.error);
+  toast(result.ok ? `Receipt ${latest.receiptNo} emailed again` : result.error);
 }
 function deleteRental(id){
   const item=rentals.find(x=>x.id===id);
   if(!item) return;
-  if(!confirm(`Delete rental expense receipt ${item.receiptNo}?`)) return;
+  if(!confirm(`Delete rental expense ${item.supplierName} / ${item.itemName}?`)) return;
   rentals=rentals.filter(x=>x.id!==id);
   save();
   renderRentals();
@@ -1319,6 +1485,7 @@ function deleteRental(id){
 function renderRentalHistory(){
   const wrap=document.getElementById("rentalHistory");
   if(!wrap) return;
+
   const q=(document.getElementById("rentalSearch")?.value||"").trim().toLowerCase();
   const list=rentals.filter(r=>[
     r.receiptNo,r.supplierName,r.supplierEmail,r.supplierPhone,
@@ -1333,29 +1500,59 @@ function renderRentalHistory(){
 
   wrap.innerHTML=`<table class="data-table">
     <thead><tr>
-      <th>Receipt</th><th>Supplier / Owner</th><th>Project</th><th>Rented Item</th>
+      <th>Latest Receipt</th><th>Supplier / Owner</th><th>Project</th><th>Rented Item</th>
       <th>Paid</th><th>Still Payable</th><th>Status</th><th>Email</th><th style="text-align:right">Actions</th>
     </tr></thead>
-    <tbody>${list.map(r=>`
+    <tbody>${list.map(r=>{
+      ensureRentalPayments(r);
+      const paid=rentalPaymentsTotal(r);
+      const balance=rentalBalance(r);
+      const status=rentalStatus(r.totalAmount,paid);
+      const paymentCount=rentalPaymentCount(r);
+      const latest=[...(r.payments||[])].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))[0];
+      return `
       <tr>
-        <td><b class="text-ffnavy">${escapeHtml(r.receiptNo)}</b><div class="text-xs text-slate-400">${escapeHtml(r.paymentDate||"")}</div></td>
-        <td><div class="font-bold">${escapeHtml(r.supplierName||"")}</div><div class="text-xs text-slate-400">${escapeHtml(r.supplierEmail||"")}</div></td>
+        <td>
+          <b class="text-ffnavy">${escapeHtml(latest?.receiptNo||r.receiptNo||"")}</b>
+          <div class="text-xs text-slate-400">${escapeHtml(latest?.date||r.paymentDate||"")}</div>
+        </td>
+        <td>
+          <div class="font-bold">${escapeHtml(r.supplierName||"")}</div>
+          <div class="text-xs text-slate-400">${escapeHtml(r.supplierEmail||"")}</div>
+        </td>
         <td>${escapeHtml(rentalProjectName(r))}</td>
-        <td><div>${escapeHtml(r.itemName)}</div><div class="text-xs text-slate-400">Qty ${Number(r.quantity||1)}${r.startDate||r.endDate?` • ${escapeHtml(r.startDate||"—")} → ${escapeHtml(r.endDate||"—")}`:""}</div></td>
-        <td><b>${money(r.paidAmount)}</b></td>
-        <td><b>${money(rentalBalance(r))}</b></td>
-        <td>${statusPill(r.status)}</td>
-        <td><div class="receipt-email-state ${r.emailSent?"receipt-email-ok":"receipt-email-warn"}">${r.emailSent?"Sent by EmailJS":(r.emailError?"Email failed":"Not sent")}</div></td>
-        <td><div class="flex justify-end gap-2">
-          <button class="icon-mini" title="Resend" onclick="resendRentalReceipt('${r.id}')"><i data-lucide="send"></i></button>
-          <button class="icon-mini danger" title="Delete" onclick="deleteRental('${r.id}')"><i data-lucide="trash-2"></i></button>
-        </div></td>
-      </tr>`).join("")}</tbody>
+        <td>
+          <div>${escapeHtml(r.itemName)}</div>
+          <div class="text-xs text-slate-400">Qty ${Number(r.quantity||1)}${r.startDate||r.endDate?` • ${escapeHtml(r.startDate||"—")} → ${escapeHtml(r.endDate||"—")}`:""}</div>
+        </td>
+        <td>
+          <b>${money(paid)}</b>
+          <div class="text-xs text-slate-400">${paymentCount} payment${paymentCount===1?"":"s"}</div>
+        </td>
+        <td><b class="${balance>0?"financial-negative":"financial-positive"}">${money(balance)}</b></td>
+        <td>${statusPill(status)}</td>
+        <td>
+          <div class="receipt-email-state ${latest?.emailSent?"receipt-email-ok":"receipt-email-warn"}">${latest?.emailSent?"Sent by EmailJS":(latest?.emailError?"Email failed":"Not sent")}</div>
+        </td>
+        <td>
+          <div class="rental-action-stack">
+            ${balance>0?`
+              <button class="btn btn-primary btn-compact" onclick="openRentalBalancePayment('${r.id}')">
+                <i data-lucide="badge-dollar-sign"></i>Pay Balance
+              </button>`:""}
+            <button class="icon-mini" title="Resend latest receipt" onclick="resendRentalReceipt('${r.id}')"><i data-lucide="send"></i></button>
+            <button class="icon-mini danger" title="Delete" onclick="deleteRental('${r.id}')"><i data-lucide="trash-2"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    }).join("")}</tbody>
   </table>`;
+
   lucide.createIcons();
 }
 function renderRentals(){
   if(!document.getElementById("view-rentals")) return;
+  migrateRentalPaymentArrays();
   renderRentalProjectOptions();
   const date=document.getElementById("rentalPaymentDate");
   if(date && !date.value) date.value=todayInputValue();
@@ -1365,7 +1562,7 @@ function renderRentals(){
 function rentalPaidForProject(projectId){
   return rentals
     .filter(r=>r.projectId===projectId)
-    .reduce((sum,r)=>sum+Number(r.paidAmount||0),0);
+    .reduce((sum,r)=>sum+rentalPaymentsTotal(r),0);
 }
 function financialProjectRows(){
   return projects.map(p=>{
@@ -1399,16 +1596,18 @@ function renderFinancial(){
   const stats=document.getElementById("financialStats");
   if(!stats) return;
 
+  migrateRentalPaymentArrays();
+
   const rows=financialProjectRows();
   const projectIncome=rows.reduce((s,x)=>s+x.revenueReceived,0);
   const equipment=rows.reduce((s,x)=>s+x.equipment,0);
   const crewPaid=rows.reduce((s,x)=>s+x.crewPaid,0);
-  const rentalExpenses=rentals.reduce((s,r)=>s+Number(r.paidAmount||0),0);
+  const rentalExpenses=rentals.reduce((s,r)=>s+rentalPaymentsTotal(r),0);
   const net=projectIncome-equipment-crewPaid-rentalExpenses;
 
   const data=[
     ["wallet",money(projectIncome),"Project Income"],
-    ["package-open",money(rentalExpenses),"Rental Expenses"],
+    ["package-open",money(rentalExpenses),"Rental Expenses Paid"],
     ["wrench",money(equipment),"Equipment Costs"],
     ["users",money(crewPaid),"Crew Paid"],
     ["badge-dollar-sign",money(net),net>=0?"Net Profit":"Net Loss"]
@@ -1438,7 +1637,7 @@ function renderFinancial(){
 
   const rentalWrap=document.getElementById("financialRentalSummary");
   const totalRentalCost=rentals.reduce((s,r)=>s+Number(r.totalAmount||0),0);
-  const amountPaid=rentals.reduce((s,r)=>s+Number(r.paidAmount||0),0);
+  const amountPaid=rentals.reduce((s,r)=>s+rentalPaymentsTotal(r),0);
   const stillPayable=Math.max(0,totalRentalCost-amountPaid);
   const deposits=rentals.reduce((s,r)=>s+Number(r.depositAmount||0),0);
   rentalWrap.innerHTML=`<div class="financial-rental-card">
@@ -2383,6 +2582,8 @@ function restoreBackup(file){
       receipts=Array.isArray(data.receipts)?data.receipts:[];
       rentals=Array.isArray(data.rentals)?data.rentals:[];
       appSettings=data.appSettings&&typeof data.appSettings==="object"?{...appSettings,...data.appSettings,id:"company"}:appSettings;
+      migrateRentalExpenseRecords();
+      migrateRentalPaymentArrays();
       save();
       renderDashboard();renderProjects();renderCrew();renderPayments();renderRentals();renderFinancial();
       toast("Backup restored and queued for Firestore sync");
@@ -2496,6 +2697,7 @@ document.addEventListener("DOMContentLoaded",()=>{
   });
   document.getElementById("rentalSearch")?.addEventListener("input",renderRentalHistory);
   document.getElementById("saveRentalPaymentBtn")?.addEventListener("click",saveRentalPayment);
+  document.getElementById("saveRentalBalanceBtn")?.addEventListener("click",saveRentalBalancePayment);
 
   document.getElementById("exportBackupBtn").addEventListener("click",exportBackup);
   document.getElementById("restoreInput").addEventListener("change",e=>restoreBackup(e.target.files[0]));
@@ -2512,6 +2714,7 @@ window.deleteCrew=deleteCrew;
 window.editProject=editProject;
 window.duplicateProject=duplicateProject;
 window.deleteProject=deleteProject;
+window.openRentalBalancePayment=openRentalBalancePayment;
 window.resendRentalReceipt=resendRentalReceipt;
 window.deleteRental=deleteRental;
 window.openReport=openReport;
