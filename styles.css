@@ -915,3 +915,164 @@ body.signature-open{
   .sidebar{overflow-x:auto}
   .sidebar nav{min-width:610px}
 }
+
+
+/* v11 — Responsive layout fix for Rental Payments + Financial */
+#view-rentals,
+#view-financial{
+  min-width:0;
+  width:100%;
+}
+
+.rental-responsive-grid{
+  display:grid;
+  grid-template-columns:minmax(380px,430px) minmax(0,1fr);
+  gap:24px;
+  align-items:start;
+  width:100%;
+  min-width:0;
+}
+
+.rental-responsive-grid > .panel,
+.financial-responsive-grid > .panel{
+  min-width:0;
+  width:100%;
+}
+
+.rental-form-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:16px;
+}
+
+.rental-form-grid > *{
+  min-width:0;
+}
+
+.rental-form-grid .field input,
+.rental-form-grid .field select,
+.rental-form-grid .field textarea{
+  width:100%;
+  min-width:0;
+  max-width:100%;
+}
+
+.rental-responsive-grid .table-wrap,
+.financial-responsive-grid .table-wrap{
+  display:block;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  overflow-x:auto;
+  overflow-y:hidden;
+  -webkit-overflow-scrolling:touch;
+}
+
+.rental-responsive-grid .data-table{
+  min-width:900px;
+}
+
+.financial-responsive-grid{
+  display:grid;
+  grid-template-columns:minmax(0,1.45fr) minmax(300px,.65fr);
+  gap:24px;
+  align-items:start;
+  width:100%;
+  min-width:0;
+}
+
+.financial-responsive-grid .data-table{
+  min-width:760px;
+}
+
+#rentalHistory{
+  min-width:0;
+}
+
+#view-rentals .panel-head,
+#view-financial .panel-head{
+  min-width:0;
+}
+
+#view-rentals .panel-head > div,
+#view-financial .panel-head > div{
+  min-width:0;
+}
+
+#view-rentals .search-box{
+  min-width:180px;
+  max-width:260px;
+}
+
+/* Medium desktop / small laptop: keep form usable, let tables scroll inside their own panel. */
+@media(max-width:1320px){
+  .rental-responsive-grid{
+    grid-template-columns:minmax(340px,390px) minmax(0,1fr);
+    gap:18px;
+  }
+
+  .financial-responsive-grid{
+    grid-template-columns:minmax(0,1fr) minmax(270px,320px);
+    gap:18px;
+  }
+}
+
+/* Tablet / narrow app windows: stack panels instead of crushing form controls. */
+@media(max-width:1120px){
+  .rental-responsive-grid,
+  .financial-responsive-grid{
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  .rental-responsive-grid .data-table,
+  .financial-responsive-grid .data-table{
+    min-width:820px;
+  }
+
+  #view-rentals .search-box{
+    max-width:none;
+  }
+}
+
+/* Mobile: full-width single-column form fields and horizontal table scrolling. */
+@media(max-width:767px){
+  .rental-responsive-grid,
+  .financial-responsive-grid{
+    gap:14px;
+  }
+
+  .rental-form-grid{
+    grid-template-columns:minmax(0,1fr);
+    gap:12px;
+  }
+
+  .rental-form-grid .md\:col-span-2{
+    grid-column:auto;
+  }
+
+  #view-rentals .panel,
+  #view-financial .panel{
+    padding:15px;
+    border-radius:16px;
+  }
+
+  #view-rentals .panel-head{
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
+
+  #view-rentals .search-box{
+    width:100%;
+    min-width:0;
+    max-width:none;
+  }
+
+  .rental-responsive-grid .data-table{
+    min-width:820px;
+  }
+
+  .financial-responsive-grid .data-table{
+    min-width:720px;
+  }
+}

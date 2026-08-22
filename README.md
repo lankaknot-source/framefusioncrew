@@ -214,3 +214,13 @@ Important correction:
 - Refundable security deposits are shown separately and are **not** counted as profit/loss expenses.
 - Rental expense summary shows total rental cost, paid to suppliers, still payable, and refundable deposits.
 - Existing v9 rental records are migrated from customer fields to supplier fields to avoid breaking the app.
+
+
+## v11 — Responsive Screen Layout Fix
+
+- Fixed Rental Payments page being squeezed by the wide rental history table.
+- Rental entry panel now keeps a usable desktop width instead of collapsing into a narrow column.
+- Wide history tables scroll inside their own panel and no longer force the whole grid wider.
+- At narrower laptop/tablet widths, Rental Payments automatically stacks form and history vertically.
+- Mobile rental form fields switch to a clean single-column layout.
+- Financial page received the same min-width/grid protection so Project Profit/Loss tables do not squeeze the summary card.
