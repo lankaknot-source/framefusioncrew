@@ -26,6 +26,15 @@ const EMAILJS_CONFIG = {
   publicKey: "g4vHiDjwBll1fqO99"
 };
 
+const PROJECT_SERVICE_PRESETS = [
+  "Live Production",
+  "Photography",
+  "Videography",
+  "After Movie",
+  "Live Streaming",
+  "Highlights / Social Media"
+];
+
 
 const STORAGE_KEYS = {
   crew: "framefusion_crew_v1",
@@ -63,6 +72,7 @@ let cloudSyncInFlight = false;
 let cloudSyncPending = false;
 let editingProjectCrew = [];
 let editingEquipmentItems = [];
+let editingProjectServices = [];
 let activeReportProjectId = null;
 let activeSignatureRole = null;
 let signaturePadHasInk = false;
@@ -181,6 +191,58 @@ function migrateRentalExpenseRecords(){
   if(changed) saveLocalCache();
 }
 
+
+function normalizeProjectServices(p){
+  if(!p) return [];
+  if(!Array.isArray(p.services)) p.services=[];
+  p.services=p.services
+    .filter(s=>s && String(s.name||"").trim())
+    .map(s=>({
+      id:s.id||uid("service"),
+      name:String(s.name||"").trim(),
+      budget:Math.max(0,Number(s.budget||0))
+    }));
+  return p.services;
+}
+function migrateProjectServices(){
+  let changed=false;
+  projects.forEach(p=>{
+    if(!Array.isArray(p.services) || !p.services.length){
+      p.services=[{
+        id:uid("service"),
+        name:"General Production",
+        budget:Math.max(0,Number(p.revenue||0))
+      }];
+      changed=true;
+    }else{
+      const before=JSON.stringify(p.services);
+      normalizeProjectServices(p);
+      if(before!==JSON.stringify(p.services)) changed=true;
+    }
+  });
+  if(changed) saveLocalCache();
+}
+function serviceBudgetsTotal(services){
+  return (services||[]).reduce((sum,s)=>sum+Number(s.budget||0),0);
+}
+function projectServiceById(projectId,serviceId){
+  if(!projectId || !serviceId) return null;
+  const p=projects.find(x=>x.id===projectId);
+  return (p?.services||[]).find(s=>s.id===serviceId)||null;
+}
+function projectRentalPaid(projectId){
+  if(!projectId) return 0;
+  return rentals
+    .filter(r=>r.projectId===projectId)
+    .reduce((sum,r)=>sum+rentalPaymentsTotal(r),0);
+}
+function projectServiceRentalPaid(projectId,serviceId){
+  if(!projectId || !serviceId) return 0;
+  return rentals
+    .filter(r=>r.projectId===projectId && r.serviceId===serviceId)
+    .reduce((sum,r)=>sum+rentalPaymentsTotal(r),0);
+}
+
 async function initializeFirestoreData(){
   setCloudStatus("connecting","Connecting Firestore");
   try{
@@ -208,6 +270,7 @@ async function initializeFirestoreData(){
 
     migrateRentalExpenseRecords();
     migrateRentalPaymentArrays();
+    migrateProjectServices();
     cloudReady=true;
 
     if(!crew.length && !projects.length){
@@ -230,6 +293,7 @@ async function initializeFirestoreData(){
     if(!crew.length && !projects.length) seedDemo();
     migrateRentalExpenseRecords();
     migrateRentalPaymentArrays();
+    migrateProjectServices();
     renderDashboard();
     renderProjects();
     renderCrew();
@@ -287,6 +351,7 @@ function seedDemo(){
     clientEmail:"",
     location:"",
     revenue:120000,
+    services:[{id:uid("service"),name:"Live Production",budget:120000}],
     equipment:70000,
     equipmentMode:"total",
     equipmentItems:[],
@@ -316,9 +381,12 @@ function equipmentTotalForProject(p){
 function projectNumbers(p){
   const crewTotal = (p.crew||[]).reduce((s,x)=>s+Number(x.payment||0),0);
   const equipmentTotal = equipmentTotalForProject(p);
+  const rentalPaid = projectRentalPaid(p?.id);
+  const productionOther = Math.max(0,equipmentTotal-rentalPaid);
+  const productionOverrun = Math.max(0,rentalPaid-equipmentTotal);
   const balance = Number(p.revenue||0) - equipmentTotal;
   const netProfit = balance - crewTotal;
-  return {crewTotal,equipmentTotal,balance,netProfit};
+  return {crewTotal,equipmentTotal,rentalPaid,productionOther,productionOverrun,balance,netProfit};
 }
 
 function setView(view){
@@ -384,7 +452,10 @@ function emptyState(icon,title,copy){
 
 function renderProjects(){
   const q = (document.getElementById("projectSearch")?.value || "").toLowerCase().trim();
-  const filtered = projects.filter(p => [p.name,p.client,p.clientEmail,p.location].join(" ").toLowerCase().includes(q));
+  const filtered = projects.filter(p => [
+    p.name,p.client,p.clientEmail,p.location,
+    ...(p.services||[]).map(s=>s.name)
+  ].join(" ").toLowerCase().includes(q));
   const grid = document.getElementById("projectsGrid");
   if(!filtered.length){
     grid.innerHTML = emptyState("folder-plus","No projects found", q ? "Try another search." : "Create your first project.");
@@ -399,6 +470,9 @@ function renderProjects(){
       </div>
       <h4>${escapeHtml(p.name)}</h4>
       <div class="project-meta">${escapeHtml(p.client || p.location || "FrameFusion Studio Project")}</div>
+      <div class="project-service-badges">
+        ${(p.services||[]).map(s=>`<span>${escapeHtml(s.name)}</span>`).join("")}
+      </div>
       <div class="project-money">
         <div><span>Revenue</span><strong>${money(p.revenue)}</strong></div>
         <div><span>Net Profit</span><strong class="${n.netProfit<0?'text-red-500':'text-green-600'}">${money(n.netProfit)}</strong></div>
@@ -487,6 +561,8 @@ function resetProjectForm(){
   document.getElementById("projectEquipment").value="";
   editingProjectCrew=[];
   editingEquipmentItems=[];
+  editingProjectServices=[];
+  renderProjectServiceBuilder();
   setEquipmentMode("total");
   renderEquipmentItems();
   renderProjectCrewRows();
@@ -504,6 +580,8 @@ function editProject(id){
   document.getElementById("projectClientEmail").value=p.clientEmail||"";
   document.getElementById("projectLocation").value=p.location||"";
   document.getElementById("projectRevenue").value=p.revenue||0;
+  editingProjectServices=JSON.parse(JSON.stringify(normalizeProjectServices(p)));
+  renderProjectServiceBuilder();
   document.getElementById("projectEquipment").value=p.equipment||0;
   const savedEquipmentMode = p.equipmentMode || ((p.equipmentItems||[]).length ? "itemized" : "total");
   editingEquipmentItems=JSON.parse(JSON.stringify(p.equipmentItems||[]));
@@ -534,6 +612,100 @@ function deleteProject(id){
   const p=projects.find(x=>x.id===id); if(!p) return;
   if(!confirm(`Delete "${p.name}"?`)) return;
   projects=projects.filter(x=>x.id!==id); save(); renderProjects(); renderDashboard(); toast("Project deleted");
+}
+
+
+function renderProjectServicePresets(){
+  const wrap=document.getElementById("projectServicePresets");
+  if(!wrap) return;
+  wrap.innerHTML=PROJECT_SERVICE_PRESETS.map(name=>{
+    const selected=editingProjectServices.some(s=>s.name.toLowerCase()===name.toLowerCase());
+    return `<button type="button" class="service-preset-btn ${selected?"selected":""}" onclick="toggleProjectServicePreset('${name.replace(/'/g,"\\'")}')">
+      <i data-lucide="${selected?"check":"plus"}"></i>${escapeHtml(name)}
+    </button>`;
+  }).join("");
+}
+function renderProjectServiceRows(){
+  const wrap=document.getElementById("projectServicesList");
+  if(!wrap) return;
+  if(!editingProjectServices.length){
+    wrap.innerHTML=`<div class="empty-service-budget">Select one or more project services above.</div>`;
+  }else{
+    wrap.innerHTML=editingProjectServices.map((s,i)=>`
+      <div class="project-service-row">
+        <div class="service-row-icon"><i data-lucide="layers-3"></i></div>
+        <input value="${escapeHtml(s.name)}" oninput="updateProjectServiceName(${i},this.value)" aria-label="Service name" />
+        <label>
+          <span>Allocated Budget (LKR)</span>
+          <input type="number" min="0" step="1" inputmode="numeric" value="${Number(s.budget||0)}"
+            oninput="updateProjectServiceBudget(${i},this.value)" aria-label="Service budget" />
+        </label>
+        <button type="button" class="remove-row" onclick="removeProjectService(${i})"><i data-lucide="x"></i></button>
+      </div>`).join("");
+  }
+  renderProjectServicePresets();
+  updateProjectServiceBudgetSummary();
+  lucide.createIcons();
+}
+function renderProjectServiceBuilder(){
+  renderProjectServiceRows();
+}
+function updateProjectServiceBudgetSummary(){
+  const revenue=Number(document.getElementById("projectRevenue")?.value||0);
+  const allocated=serviceBudgetsTotal(editingProjectServices);
+  const difference=revenue-allocated;
+  const set=(id,val)=>{const el=document.getElementById(id);if(el) el.textContent=money(val);};
+  set("serviceProjectRevenue",revenue);
+  set("serviceBudgetAllocated",allocated);
+  set("serviceBudgetDifference",Math.abs(difference));
+  const label=document.getElementById("serviceBudgetDifferenceLabel");
+  const value=document.getElementById("serviceBudgetDifference");
+  if(label) label.textContent=difference>=0?"Unallocated":"Overallocated";
+  if(value){
+    value.classList.toggle("financial-negative",difference<0);
+    value.classList.toggle("financial-positive",difference===0);
+  }
+}
+function toggleProjectServicePreset(name){
+  const idx=editingProjectServices.findIndex(s=>s.name.toLowerCase()===String(name).toLowerCase());
+  if(idx>=0){
+    editingProjectServices.splice(idx,1);
+  }else{
+    const revenue=Number(document.getElementById("projectRevenue")?.value||0);
+    const remaining=Math.max(0,revenue-serviceBudgetsTotal(editingProjectServices));
+    editingProjectServices.push({id:uid("service"),name,budget:remaining});
+  }
+  renderProjectServiceRows();
+  updateProjectCalcs();
+}
+function addCustomProjectService(){
+  const input=document.getElementById("customProjectServiceName");
+  const name=String(input?.value||"").trim();
+  if(!name){toast("Enter a custom service name");return;}
+  if(editingProjectServices.some(s=>s.name.toLowerCase()===name.toLowerCase())){
+    toast("This service is already selected");return;
+  }
+  const revenue=Number(document.getElementById("projectRevenue")?.value||0);
+  const remaining=Math.max(0,revenue-serviceBudgetsTotal(editingProjectServices));
+  editingProjectServices.push({id:uid("service"),name,budget:remaining});
+  input.value="";
+  renderProjectServiceRows();
+  updateProjectCalcs();
+}
+function updateProjectServiceName(i,value){
+  if(!editingProjectServices[i]) return;
+  editingProjectServices[i].name=String(value||"");
+  renderProjectServicePresets();
+}
+function updateProjectServiceBudget(i,value){
+  if(!editingProjectServices[i]) return;
+  editingProjectServices[i].budget=Math.max(0,Number(value||0));
+  updateProjectServiceBudgetSummary();
+}
+function removeProjectService(i){
+  editingProjectServices.splice(i,1);
+  renderProjectServiceRows();
+  updateProjectCalcs();
 }
 
 function currentEquipmentMode(){
@@ -646,15 +818,24 @@ function toggleCrewForProject(id){
 }
 function updateProjectCalcs(){
   const revenue=Number(document.getElementById("projectRevenue")?.value||0);
-  const equipment=currentEquipmentMode()==="itemized"
+  const productionCost=currentEquipmentMode()==="itemized"
     ? equipmentItemsTotal(editingEquipmentItems)
     : Number(document.getElementById("projectEquipment")?.value||0);
   const crewTotal=editingProjectCrew.reduce((s,x)=>s+Number(x.payment||0),0);
-  const balance=revenue-equipment;
+  const editingId=document.getElementById("projectId")?.value||"";
+  const rentalPaid=editingId?projectRentalPaid(editingId):0;
+  const productionOther=Math.max(0,productionCost-rentalPaid);
+  const balance=revenue-productionCost;
   const profit=balance-crewTotal;
   const set=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=money(val)};
-  set("calcBalance",balance);set("calcCrew",crewTotal);set("calcProfit",profit);
+  set("calcProductionCost",productionCost);
+  set("calcRentalIncluded",rentalPaid);
+  set("calcProductionOther",productionOther);
+  set("calcBalance",balance);
+  set("calcCrew",crewTotal);
+  set("calcProfit",profit);
   renderEquipmentItemsTotalOnly();
+  updateProjectServiceBudgetSummary();
   const el=document.getElementById("calcProfit");
   if(el){el.className=profit<0?"text-red-500":"text-ffgreen";}
 }
@@ -1227,6 +1408,24 @@ function renderRentalProjectOptions(){
       .join("");
   if([...select.options].some(o=>o.value===current)) select.value=current;
 }
+function renderRentalServiceOptions(){
+  const projectSelect=document.getElementById("rentalProjectId");
+  const serviceSelect=document.getElementById("rentalServiceId");
+  if(!serviceSelect) return;
+  const current=serviceSelect.value;
+  const projectId=projectSelect?.value||"";
+  const p=projects.find(x=>x.id===projectId);
+  const services=p?.services||[];
+  serviceSelect.innerHTML=`<option value="">Project-level / General Production</option>`+
+    services.map(s=>`<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
+  if([...serviceSelect.options].some(o=>o.value===current)) serviceSelect.value=current;
+}
+function rentalServiceName(item){
+  if(!item?.serviceId) return item?.serviceName||"Project-level";
+  const s=projectServiceById(item.projectId,item.serviceId);
+  return s?.name || item.serviceName || "Project-level";
+}
+
 function renderRentalLiveSummary(){
   const wrap=document.getElementById("rentalLiveSummary");
   if(!wrap) return;
@@ -1246,7 +1445,7 @@ function rentalEmailParams(item,payment){
     receipt_no:payment?.receiptNo||item.receiptNo||"",
     status:rentalStatus(item.totalAmount,totalPaid),
     payment_date:payment?.date||item.paymentDate||todayInputValue(),
-    project_name:`${rentalProjectName(item)} - ${item.itemName}`,
+    project_name:`${rentalProjectName(item)}${item.serviceId?` / ${rentalServiceName(item)}`:""} - ${item.itemName}`,
     person_name:item.supplierName,
     payment_type:"Rental Expense Payment",
     payment_method:payment?.method||item.paymentMethod||"Bank Transfer",
@@ -1312,6 +1511,8 @@ async function sendRentalReceiptEmail(item,payment){
 async function saveRentalPayment(){
   const projectId=document.getElementById("rentalProjectId")?.value||"";
   const projectName=projectId?(projects.find(x=>x.id===projectId)?.name||""):"";
+  const serviceId=document.getElementById("rentalServiceId")?.value||"";
+  const serviceName=serviceId?(projectServiceById(projectId,serviceId)?.name||""):"";
   const supplierName=document.getElementById("rentalSupplierName").value.trim();
   const supplierEmail=normalizedEmail(document.getElementById("rentalSupplierEmail").value);
   const supplierPhone=document.getElementById("rentalSupplierPhone").value.trim();
@@ -1350,7 +1551,7 @@ async function saveRentalPayment(){
   const item={
     id:uid("rental"),
     receiptNo,
-    projectId,projectName,
+    projectId,projectName,serviceId,serviceName,
     supplierName,supplierEmail,supplierPhone,
     itemName,quantity,totalAmount,paidAmount,
     paymentDate,startDate,endDate,paymentMethod,depositAmount,note,
@@ -1489,7 +1690,7 @@ function renderRentalHistory(){
   const q=(document.getElementById("rentalSearch")?.value||"").trim().toLowerCase();
   const list=rentals.filter(r=>[
     r.receiptNo,r.supplierName,r.supplierEmail,r.supplierPhone,
-    r.itemName,r.status,r.projectName,rentalProjectName(r)
+    r.itemName,r.status,r.projectName,rentalProjectName(r),r.serviceName,rentalServiceName(r)
   ].join(" ").toLowerCase().includes(q));
 
   if(!list.length){
@@ -1520,7 +1721,10 @@ function renderRentalHistory(){
           <div class="font-bold">${escapeHtml(r.supplierName||"")}</div>
           <div class="text-xs text-slate-400">${escapeHtml(r.supplierEmail||"")}</div>
         </td>
-        <td>${escapeHtml(rentalProjectName(r))}</td>
+        <td>
+          <div>${escapeHtml(rentalProjectName(r))}</div>
+          <div class="text-xs text-slate-400">${escapeHtml(rentalServiceName(r))}</div>
+        </td>
         <td>
           <div>${escapeHtml(r.itemName)}</div>
           <div class="text-xs text-slate-400">Qty ${Number(r.quantity||1)}${r.startDate||r.endDate?` • ${escapeHtml(r.startDate||"—")} → ${escapeHtml(r.endDate||"—")}`:""}</div>
@@ -1554,24 +1758,27 @@ function renderRentals(){
   if(!document.getElementById("view-rentals")) return;
   migrateRentalPaymentArrays();
   renderRentalProjectOptions();
+  renderRentalServiceOptions();
   const date=document.getElementById("rentalPaymentDate");
   if(date && !date.value) date.value=todayInputValue();
   renderRentalLiveSummary();
   renderRentalHistory();
 }
 function rentalPaidForProject(projectId){
-  return rentals
-    .filter(r=>r.projectId===projectId)
-    .reduce((sum,r)=>sum+rentalPaymentsTotal(r),0);
+  return projectRentalPaid(projectId);
 }
 function financialProjectRows(){
   return projects.map(p=>{
-    const equipment=equipmentTotalForProject(p);
+    const productionCost=equipmentTotalForProject(p);
     const crewPaid=(p.crew||[]).reduce((sum,m)=>sum+crewPaymentsTotal(m),0);
     const revenueReceived=eventPaymentsTotal(p);
-    const rentalPaid=rentalPaidForProject(p.id);
-    const profit=revenueReceived-equipment-crewPaid-rentalPaid;
-    return {p,equipment,crewPaid,revenueReceived,rentalPaid,profit};
+    const rentalPaid=projectRentalPaid(p.id);
+    const productionOther=Math.max(0,productionCost-rentalPaid);
+    const rentalOverrun=Math.max(0,rentalPaid-productionCost);
+    // Rental payments are already included inside Production Cost.
+    // Do not subtract rentalPaid again.
+    const profit=revenueReceived-productionCost-crewPaid;
+    return {p,productionCost,crewPaid,revenueReceived,rentalPaid,productionOther,rentalOverrun,profit};
   });
 }
 function financialCrewTotals(){
@@ -1592,23 +1799,58 @@ function financialCrewTotals(){
     .map(x=>({...x,projectCount:x.projects.size,projects:[...x.projects]}))
     .sort((a,b)=>b.paid-a.paid);
 }
+function renderFinancialServiceTable(){
+  const wrap=document.getElementById("financialServiceTable");
+  if(!wrap) return;
+  const rows=[];
+  projects.forEach(p=>{
+    (p.services||[]).forEach(s=>{
+      rows.push({
+        project:p.name,
+        service:s.name,
+        budget:Number(s.budget||0),
+        rentalPaid:projectServiceRentalPaid(p.id,s.id),
+        projectRevenue:Number(p.revenue||0)
+      });
+    });
+  });
+  if(!rows.length){
+    wrap.innerHTML=emptyState("layers-3","No service budgets yet","Edit a project and select its services.");
+    return;
+  }
+  wrap.innerHTML=`<table class="data-table service-financial-table">
+    <thead><tr><th>Project</th><th>Service / Department</th><th>Allocated Revenue</th><th>% of Project</th><th>Rental Paid Inside Production</th></tr></thead>
+    <tbody>${rows.map(r=>`
+      <tr>
+        <td><b class="text-ffnavy">${escapeHtml(r.project)}</b></td>
+        <td><span class="service-budget-pill">${escapeHtml(r.service)}</span></td>
+        <td><b>${money(r.budget)}</b></td>
+        <td>${r.projectRevenue>0?((r.budget/r.projectRevenue)*100).toFixed(1):"0.0"}%</td>
+        <td>${money(r.rentalPaid)}</td>
+      </tr>`).join("")}</tbody>
+  </table>`;
+}
 function renderFinancial(){
   const stats=document.getElementById("financialStats");
   if(!stats) return;
 
   migrateRentalPaymentArrays();
+  migrateProjectServices();
 
   const rows=financialProjectRows();
   const projectIncome=rows.reduce((s,x)=>s+x.revenueReceived,0);
-  const equipment=rows.reduce((s,x)=>s+x.equipment,0);
+  const productionCosts=rows.reduce((s,x)=>s+x.productionCost,0);
   const crewPaid=rows.reduce((s,x)=>s+x.crewPaid,0);
-  const rentalExpenses=rentals.reduce((s,r)=>s+rentalPaymentsTotal(r),0);
-  const net=projectIncome-equipment-crewPaid-rentalExpenses;
+  const rentalIncluded=rows.reduce((s,x)=>s+x.rentalPaid,0);
+  const unassignedRentalPaid=rentals
+    .filter(r=>!r.projectId)
+    .reduce((s,r)=>s+rentalPaymentsTotal(r),0);
+  const net=projectIncome-productionCosts-crewPaid-unassignedRentalPaid;
 
   const data=[
     ["wallet",money(projectIncome),"Project Income"],
-    ["package-open",money(rentalExpenses),"Rental Expenses Paid"],
-    ["wrench",money(equipment),"Equipment Costs"],
+    ["wrench",money(productionCosts),"Production Costs"],
+    ["package-open",money(rentalIncluded),"Rental Paid (Included)"],
     ["users",money(crewPaid),"Crew Paid"],
     ["badge-dollar-sign",money(net),net>=0?"Net Profit":"Net Loss"]
   ];
@@ -1620,17 +1862,22 @@ function renderFinancial(){
     </div>`).join("");
 
   const projectsWrap=document.getElementById("financialProjectsTable");
-  projectsWrap.innerHTML=rows.length?`<table class="data-table">
+  projectsWrap.innerHTML=rows.length?`<table class="data-table financial-project-v13">
     <thead><tr>
-      <th>Project</th><th>Income Received</th><th>Equipment</th><th>Crew Paid</th><th>Rental Paid</th><th>Profit / Loss</th>
+      <th>Project</th><th>Income Received</th><th>Production Cost</th><th>Rental Included</th>
+      <th>Other Production Cost</th><th>Crew Paid</th><th>Profit / Loss</th>
     </tr></thead>
     <tbody>${rows.map(x=>`
       <tr>
         <td><b class="text-ffnavy">${escapeHtml(x.p.name)}</b></td>
         <td>${money(x.revenueReceived)}</td>
-        <td>${money(x.equipment)}</td>
+        <td>${money(x.productionCost)}</td>
+        <td>
+          ${money(x.rentalPaid)}
+          ${x.rentalOverrun>0?`<div class="text-xs financial-negative">Over production cost by ${money(x.rentalOverrun)}</div>`:""}
+        </td>
+        <td>${money(x.productionOther)}</td>
         <td>${money(x.crewPaid)}</td>
-        <td>${money(x.rentalPaid)}</td>
         <td><b class="${x.profit>=0?"financial-positive":"financial-negative"}">${money(x.profit)}</b></td>
       </tr>`).join("")}</tbody>
   </table>`:emptyState("folder-kanban","No project financials","Create projects and record payments first.");
@@ -1641,12 +1888,18 @@ function renderFinancial(){
   const stillPayable=Math.max(0,totalRentalCost-amountPaid);
   const deposits=rentals.reduce((s,r)=>s+Number(r.depositAmount||0),0);
   rentalWrap.innerHTML=`<div class="financial-rental-card">
-    <div class="financial-rental-line"><span>Rental Expense Records</span><strong>${rentals.length}</strong></div>
-    <div class="financial-rental-line"><span>Total Rental Cost</span><strong>${money(totalRentalCost)}</strong></div>
-    <div class="financial-rental-line"><span>Paid to Suppliers</span><strong class="financial-negative">${money(amountPaid)}</strong></div>
+    <div class="financial-rental-line"><span>Total Rental Contracts</span><strong>${money(totalRentalCost)}</strong></div>
+    <div class="financial-rental-line"><span>Paid to Suppliers</span><strong>${money(amountPaid)}</strong></div>
     <div class="financial-rental-line"><span>Still Payable</span><strong class="${stillPayable>0?"financial-negative":"financial-positive"}">${money(stillPayable)}</strong></div>
+    <div class="financial-rental-line"><span>Included in Project Production Cost</span><strong class="financial-positive">${money(rentalIncluded)}</strong></div>
+    <div class="financial-rental-line"><span>Unassigned Rental Payments</span><strong class="${unassignedRentalPaid>0?"financial-negative":""}">${money(unassignedRentalPaid)}</strong></div>
+    <div class="financial-rental-note">
+      Project-linked rental payments are <b>not deducted twice</b>. They are a breakdown of Total Production Cost.
+    </div>
     <div class="financial-rental-line"><span>Refundable Security Deposits</span><strong>${money(deposits)}</strong></div>
   </div>`;
+
+  renderFinancialServiceTable();
 
   const crewWrap=document.getElementById("financialCrewTable");
   const crewRows=financialCrewTotals();
@@ -1966,19 +2219,33 @@ function reportHtml(p){
   const n=projectNumbers(p);
   const target=Number(p.targetProfit||0);
   const budgetForCrew=n.balance-target;
+  const services=normalizeProjectServices(p);
+  const serviceAllocated=serviceBudgetsTotal(services);
+  const serviceUnallocated=Number(p.revenue||0)-serviceAllocated;
   const isItemized=(p.equipmentMode||"total")==="itemized" && (p.equipmentItems||[]).length>0;
+
+  const serviceRows=services.map(s=>`
+    <tr>
+      <td><b>${escapeHtml(s.name)}</b></td>
+      <td>${Number(s.budget||0).toLocaleString("en-LK")}</td>
+    </tr>`).join("");
+
   const equipmentRows=(p.equipmentItems||[]).map(item=>`
     <tr>
-      <td><b>${escapeHtml(item.name||"Unnamed equipment")}</b></td>
+      <td><b>${escapeHtml(item.name||"Unnamed production item")}</b></td>
       <td>${Number(item.cost||0).toLocaleString("en-LK")}</td>
     </tr>`).join("");
+
   const crewRows=(p.crew||[]).map(m=>`
     <tr>
       <td><b>${escapeHtml(m.name)}</b></td>
       <td><span class="report-role">${escapeHtml(m.role)}</span></td>
       <td>${Number(m.payment||0).toLocaleString("en-LK")}</td>
     </tr>`).join("");
-  const crewSectionNo=isItemized?3:2;
+
+  const serviceSectionNo=2;
+  const productionSectionNo=3;
+  const crewSectionNo=isItemized?4:3;
 
   return `
     <div class="report-header">
@@ -1998,7 +2265,7 @@ function reportHtml(p){
 
     <div class="report-kpis">
       <div class="report-kpi"><span>Total Revenue</span><b>${money(p.revenue)}</b></div>
-      <div class="report-kpi"><span>Equipment Cost</span><b>${money(n.equipmentTotal)}</b></div>
+      <div class="report-kpi"><span>Production Cost</span><b>${money(n.equipmentTotal)}</b></div>
       <div class="report-kpi"><span>Total Crew Pay</span><b>${money(n.crewTotal)}</b></div>
       <div class="report-kpi profit"><span>Net Profit</span><b>${money(n.netProfit)}</b></div>
     </div>
@@ -2008,20 +2275,32 @@ function reportHtml(p){
       <thead><tr><th>DESCRIPTION</th><th>AMOUNT (LKR)</th></tr></thead>
       <tbody>
         <tr><td>Total Project Revenue</td><td>${Number(p.revenue||0).toLocaleString("en-LK")}</td></tr>
-        <tr><td>Equipment & Production Expenses</td><td>- ${Number(n.equipmentTotal||0).toLocaleString("en-LK")}</td></tr>
+        <tr><td>Total Production Cost <small>(includes rentals)</small></td><td>- ${Number(n.equipmentTotal||0).toLocaleString("en-LK")}</td></tr>
+        <tr><td>Rental Payments Included in Production Cost</td><td>${Number(n.rentalPaid||0).toLocaleString("en-LK")}</td></tr>
+        <tr><td>Other / Remaining Production Cost</td><td>${Number(n.productionOther||0).toLocaleString("en-LK")}</td></tr>
         <tr><td><b>Balance Available for Crew & Company Profit</b></td><td><b>${n.balance.toLocaleString("en-LK")}</b></td></tr>
         <tr><td>Target Company Profit</td><td>- ${target.toLocaleString("en-LK")}</td></tr>
         <tr class="strong-row"><td>Total Budget Allocated for Crew Payments</td><td>${money(budgetForCrew)}</td></tr>
       </tbody>
     </table>
 
+    <div class="report-section-title">${serviceSectionNo}. Project Service Budget Allocation (${services.length} Services | Allocated: ${money(serviceAllocated)})</div>
+    <table class="report-table">
+      <thead><tr><th>SERVICE / DEPARTMENT</th><th>ALLOCATED REVENUE (LKR)</th></tr></thead>
+      <tbody>
+        ${serviceRows}
+        <tr class="strong-row"><td>Total Allocated to Services</td><td>${money(serviceAllocated)}</td></tr>
+        ${serviceUnallocated!==0?`<tr><td>${serviceUnallocated>0?"Unallocated Revenue":"Overallocated Amount"}</td><td>${money(Math.abs(serviceUnallocated))}</td></tr>`:""}
+      </tbody>
+    </table>
+
     ${isItemized ? `
-      <div class="report-section-title">2. Equipment Cost Breakdown (${p.equipmentItems.length} Items | Total: ${money(n.equipmentTotal)})</div>
+      <div class="report-section-title">${productionSectionNo}. Production Cost Breakdown (${p.equipmentItems.length} Items | Total: ${money(n.equipmentTotal)})</div>
       <table class="report-table">
-        <thead><tr><th>EQUIPMENT / PRODUCTION ITEM</th><th>COST (LKR)</th></tr></thead>
+        <thead><tr><th>PRODUCTION ITEM / SERVICE</th><th>COST (LKR)</th></tr></thead>
         <tbody>
           ${equipmentRows}
-          <tr class="strong-row"><td>Total Equipment & Production Cost</td><td>${money(n.equipmentTotal)}</td></tr>
+          <tr class="strong-row"><td>Total Production Cost</td><td>${money(n.equipmentTotal)}</td></tr>
         </tbody>
       </table>
     ` : ""}
@@ -2043,6 +2322,7 @@ function reportHtml(p){
     <div class="report-footer">FrameFusion Studio • ${escapeHtml(p.name)} • Budget Report • Generated by FrameFusion Budget & Crew Manager</div>
   `;
 }
+
 function openReport(id){
   const p=projects.find(x=>x.id===id); if(!p) return;
   activeReportProjectId=id;
@@ -2120,7 +2400,7 @@ function drawKpis(ctx,p,n,W,margin,startY){
   const gap=18, boxW=(W-margin*2-gap*3)/4, boxH=120, y=startY+30;
   const data=[
     ["TOTAL REVENUE",drawMoney(ctx,p.revenue),"#111b2e"],
-    ["EQUIPMENT COST",drawMoney(ctx,n.equipmentTotal),"#111b2e"],
+    ["PRODUCTION COST",drawMoney(ctx,n.equipmentTotal),"#111b2e"],
     ["TOTAL CREW PAY",drawMoney(ctx,n.crewTotal),"#111b2e"],
     ["NET PROFIT",drawMoney(ctx,n.netProfit),n.netProfit<0?"#dc2626":"#20b457"]
   ];
@@ -2154,7 +2434,9 @@ function drawFinancialTable(ctx,p,n,W,margin,y){
   const x=margin,w=W-margin*2;
   const rows=[
     ["Total Project Revenue",Number(p.revenue||0).toLocaleString("en-LK"),false],
-    ["Equipment & Production Expenses","- "+Number(n.equipmentTotal||0).toLocaleString("en-LK"),false],
+    ["Total Production Cost (includes rentals)","- "+Number(n.equipmentTotal||0).toLocaleString("en-LK"),false],
+    ["Rental Payments Included",Number(n.rentalPaid||0).toLocaleString("en-LK"),false],
+    ["Other / Remaining Production Cost",Number(n.productionOther||0).toLocaleString("en-LK"),false],
     ["Balance Available for Crew & Company Profit",n.balance.toLocaleString("en-LK"),true],
     ["Target Company Profit","- "+Number(p.targetProfit||0).toLocaleString("en-LK"),false],
     ["Total Budget Allocated for Crew Payments",drawMoney(ctx,n.crewTotal),true]
@@ -2167,7 +2449,7 @@ function drawFinancialTable(ctx,p,n,W,margin,y){
 
   rows.forEach((r,i)=>{
     const ry=y+headerH+i*rowH;
-    ctx.fillStyle = i===4 ? "#eef2f8" : (i%2 ? "#f8f9fb" : "#ffffff");
+    ctx.fillStyle = i===rows.length-1 ? "#eef2f8" : (i%2 ? "#f8f9fb" : "#ffffff");
     ctx.fillRect(x,ry,w,rowH);
     ctx.strokeStyle="#e6ebf0";ctx.lineWidth=1;ctx.strokeRect(x,ry,w,rowH);
     ctx.fillStyle="#182235";
@@ -2181,13 +2463,46 @@ function drawFinancialTable(ctx,p,n,W,margin,y){
   return y+headerH+rows.length*rowH;
 }
 
+function drawServiceBudgetTablePage(ctx,p,rows,W,margin,y,showTotal){
+  const x=margin,w=W-margin*2;
+  const col1=w-300;
+  const headerH=58,rowH=55;
+  ctx.fillStyle="#1d2c43";ctx.fillRect(x,y,w,headerH);
+  ctx.fillStyle="#fff";ctx.font="800 18px Arial";
+  ctx.fillText("SERVICE / DEPARTMENT",x+20,y+36);
+  ctx.fillText("ALLOCATED REVENUE (LKR)",x+col1+20,y+36);
+
+  rows.forEach((item,i)=>{
+    const ry=y+headerH+i*rowH;
+    ctx.fillStyle=i%2?"#f8f9fb":"#ffffff";ctx.fillRect(x,ry,w,rowH);
+    ctx.strokeStyle="#e6ebf0";ctx.lineWidth=1;ctx.strokeRect(x,ry,w,rowH);
+    ctx.fillStyle="#172033";ctx.font="800 18px Arial";
+    ctx.fillText(truncateCanvasText(ctx,item.name||"Service",col1-40),x+20,ry+35);
+    ctx.textAlign="right";ctx.font="400 18px Arial";
+    ctx.fillText(Number(item.budget||0).toLocaleString("en-LK"),x+w-20,ry+35);
+    ctx.textAlign="left";
+  });
+
+  let endY=y+headerH+rows.length*rowH;
+  if(showTotal){
+    const allocated=serviceBudgetsTotal(p.services||[]);
+    ctx.fillStyle="#eef2f8";ctx.fillRect(x,endY,w,rowH);
+    ctx.strokeStyle="#c9d3df";ctx.lineWidth=2;ctx.strokeRect(x,endY,w,rowH);
+    ctx.fillStyle="#172033";ctx.font="900 18px Arial";
+    ctx.fillText("Total Allocated to Services",x+20,endY+35);
+    ctx.textAlign="right";ctx.fillText(drawMoney(ctx,allocated),x+w-20,endY+35);ctx.textAlign="left";
+    endY+=rowH;
+  }
+  return endY;
+}
+
 function drawEquipmentTablePage(ctx,p,rows,W,margin,y,showTotal){
   const n=projectNumbers(p),x=margin,w=W-margin*2;
   const col1=w-260;
   const headerH=58,rowH=55;
   ctx.fillStyle="#1d2c43";ctx.fillRect(x,y,w,headerH);
   ctx.fillStyle="#fff";ctx.font="800 18px Arial";
-  ctx.fillText("EQUIPMENT / PRODUCTION ITEM",x+20,y+36);
+  ctx.fillText("PRODUCTION ITEM / SERVICE",x+20,y+36);
   ctx.fillText("COST (LKR)",x+col1+20,y+36);
 
   rows.forEach((item,i)=>{
@@ -2206,7 +2521,7 @@ function drawEquipmentTablePage(ctx,p,rows,W,margin,y,showTotal){
     ctx.fillStyle="#eef2f8";ctx.fillRect(x,endY,w,rowH);
     ctx.strokeStyle="#c9d3df";ctx.lineWidth=2;ctx.strokeRect(x,endY,w,rowH);
     ctx.fillStyle="#172033";ctx.font="900 18px Arial";
-    ctx.fillText("Total Equipment & Production Cost",x+20,endY+35);
+    ctx.fillText("Total Production Cost",x+20,endY+35);
     ctx.textAlign="right";ctx.fillText(drawMoney(ctx,n.equipmentTotal),x+w-20,endY+35);ctx.textAlign="left";
     endY+=rowH;
   }
@@ -2329,6 +2644,7 @@ async function buildReportCanvases(p){
     loadDataImage(signatures.manager).catch(()=>null)
   ]);
   const n=projectNumbers(p);
+  const services=normalizeProjectServices(p);
   const equipmentRows=((p.equipmentMode||"total")==="itemized") ? (p.equipmentItems||[]) : [];
   const allCrew=p.crew||[];
   const pages=[];
@@ -2359,14 +2675,48 @@ async function buildReportCanvases(p){
 
   let state=createPage();
 
-  // Itemized equipment section
+
+  // Project service / department budget allocation
+  if(services.length){
+    let serviceIndex=0;
+    let firstServiceChunk=true;
+    while(serviceIndex<services.length){
+      const title=firstServiceChunk
+        ? `2. Project Service Budget Allocation (${services.length} Services | Allocated: ${drawMoney(state.ctx,serviceBudgetsTotal(services))})`
+        : "Project Service Budget Allocation - Continued";
+
+      const neededMin=68+58+55+55;
+      if(bottomLimit-state.y < neededMin){
+        finishPage(state);
+        state=createPage(title);
+        state.y=drawSectionTitle(state.ctx,title,W,margin,state.y);
+      }else{
+        state.y=drawSectionTitle(state.ctx,title,W,margin,state.y+18);
+      }
+
+      const available=bottomLimit-state.y;
+      const capacity=Math.max(1,Math.floor((available-58-55)/55));
+      const chunk=services.slice(serviceIndex,serviceIndex+capacity);
+      const isLast=serviceIndex+chunk.length>=services.length;
+      state.y=drawServiceBudgetTablePage(state.ctx,p,chunk,W,margin,state.y,isLast);
+      serviceIndex+=chunk.length;
+      firstServiceChunk=false;
+
+      if(!isLast){
+        finishPage(state);
+        state=createPage("Project Service Budget Allocation - Continued");
+      }
+    }
+  }
+
+  // Itemized production cost section
   if(equipmentRows.length){
     let index=0;
     let firstEquipmentChunk=true;
     while(index<equipmentRows.length){
       const title = firstEquipmentChunk
-        ? `2. Equipment Cost Breakdown (${equipmentRows.length} Items | Total: ${drawMoney(state.ctx,n.equipmentTotal)})`
-        : "Equipment Cost Breakdown - Continued";
+        ? `3. Production Cost Breakdown (${equipmentRows.length} Items | Total: ${drawMoney(state.ctx,n.equipmentTotal)})`
+        : "Production Cost Breakdown - Continued";
 
       const neededMin=68+58+55+55;
       if(bottomLimit-state.y < neededMin){
@@ -2387,13 +2737,13 @@ async function buildReportCanvases(p){
 
       if(!isLast){
         finishPage(state);
-        state=createPage("Equipment Cost Breakdown - Continued");
+        state=createPage("Production Cost Breakdown - Continued");
       }
     }
   }
 
   // Crew section
-  const crewSectionNo=equipmentRows.length?3:2;
+  const crewSectionNo=equipmentRows.length?4:3;
   let crewIndex=0;
   let firstCrewChunk=true;
   const crewRowsToDraw=allCrew.length ? allCrew : [null];
@@ -2584,6 +2934,7 @@ function restoreBackup(file){
       appSettings=data.appSettings&&typeof data.appSettings==="object"?{...appSettings,...data.appSettings,id:"company"}:appSettings;
       migrateRentalExpenseRecords();
       migrateRentalPaymentArrays();
+      migrateProjectServices();
       save();
       renderDashboard();renderProjects();renderCrew();renderPayments();renderRentals();renderFinancial();
       toast("Backup restored and queued for Firestore sync");
@@ -2634,6 +2985,16 @@ document.addEventListener("DOMContentLoaded",()=>{
     e.preventDefault();
     const id=document.getElementById("projectId").value;
     const old=id?projects.find(x=>x.id===id):null;
+    const projectRevenue=Number(document.getElementById("projectRevenue").value||0);
+    const cleanServices=editingProjectServices
+      .map(s=>({id:s.id||uid("service"),name:String(s.name||"").trim(),budget:Math.max(0,Number(s.budget||0))}))
+      .filter(s=>s.name);
+    if(!cleanServices.length){toast("Select at least one Project Service / Department");return;}
+    const allocatedRevenue=serviceBudgetsTotal(cleanServices);
+    if(allocatedRevenue>projectRevenue){
+      toast(`Service budgets exceed project revenue by ${money(allocatedRevenue-projectRevenue)}`);
+      return;
+    }
     const p={
       id:id||uid("project"),
       name:document.getElementById("projectName").value.trim(),
@@ -2641,7 +3002,8 @@ document.addEventListener("DOMContentLoaded",()=>{
       client:document.getElementById("projectClient").value.trim(),
       clientEmail:document.getElementById("projectClientEmail").value.trim(),
       location:document.getElementById("projectLocation").value.trim(),
-      revenue:Number(document.getElementById("projectRevenue").value||0),
+      revenue:projectRevenue,
+      services:JSON.parse(JSON.stringify(cleanServices)),
       equipmentMode:currentEquipmentMode(),
       equipmentItems:currentEquipmentMode()==="itemized"
         ? JSON.parse(JSON.stringify(editingEquipmentItems.filter(item=>item.name.trim() || Number(item.cost||0)>0)))
@@ -2665,6 +3027,10 @@ document.addEventListener("DOMContentLoaded",()=>{
   });
 
   ["projectRevenue","projectEquipment"].forEach(id=>document.getElementById(id).addEventListener("input",updateProjectCalcs));
+  document.getElementById("addCustomProjectServiceBtn")?.addEventListener("click",addCustomProjectService);
+  document.getElementById("customProjectServiceName")?.addEventListener("keydown",e=>{
+    if(e.key==="Enter"){e.preventDefault();addCustomProjectService();}
+  });
   document.querySelectorAll('input[name="equipmentMode"]').forEach(input=>input.addEventListener("change",()=>setEquipmentMode(input.value)));
   document.getElementById("addEquipmentItemBtn").addEventListener("click",addEquipmentItem);
   document.getElementById("addCrewToProjectBtn").addEventListener("click",openCrewPicker);
@@ -2695,6 +3061,11 @@ document.addEventListener("DOMContentLoaded",()=>{
   ["rentalTotalAmount","rentalPaidAmount","rentalDepositAmount"].forEach(id=>{
     document.getElementById(id)?.addEventListener("input",renderRentalLiveSummary);
   });
+  document.getElementById("rentalProjectId")?.addEventListener("change",()=>{
+    const service=document.getElementById("rentalServiceId");
+    if(service) service.value="";
+    renderRentalServiceOptions();
+  });
   document.getElementById("rentalSearch")?.addEventListener("input",renderRentalHistory);
   document.getElementById("saveRentalPaymentBtn")?.addEventListener("click",saveRentalPayment);
   document.getElementById("saveRentalBalanceBtn")?.addEventListener("click",saveRentalBalancePayment);
@@ -2714,6 +3085,10 @@ window.deleteCrew=deleteCrew;
 window.editProject=editProject;
 window.duplicateProject=duplicateProject;
 window.deleteProject=deleteProject;
+window.toggleProjectServicePreset=toggleProjectServicePreset;
+window.updateProjectServiceName=updateProjectServiceName;
+window.updateProjectServiceBudget=updateProjectServiceBudget;
+window.removeProjectService=removeProjectService;
 window.openRentalBalancePayment=openRentalBalancePayment;
 window.resendRentalReceipt=resendRentalReceipt;
 window.deleteRental=deleteRental;

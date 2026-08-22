@@ -244,3 +244,54 @@ Important correction:
 - Rental Expense History shows cumulative Paid, Remaining Balance, payment count, and latest receipt.
 - Financial calculations now use cumulative rental payments, so second/third balance payments are counted correctly.
 - Existing older rental records are automatically migrated into the new multi-payment structure.
+
+
+## v13 — Multi-Service Projects + Revenue Allocation + Rental-in-Production-Cost
+
+### Project Services / Departments
+A single project can now contain multiple deliverables, including:
+- Live Production
+- Photography
+- Videography
+- After Movie
+- Live Streaming
+- Highlights / Social Media
+- Custom services
+
+Each selected service gets its own **Allocated Revenue Budget**.
+
+Example:
+- Total Project Revenue: LKR 180,000
+- Live Production: LKR 120,000
+- Photography: LKR 60,000
+- Unallocated: LKR 0
+
+The project editor prevents service budgets from exceeding the project's total revenue.
+
+### Rental payments are included in Production Cost
+Rental payments are no longer double-counted as a second project expense.
+
+Example:
+- Total Production Cost: LKR 70,000
+- Rental Payments inside Production Cost: LKR 50,000
+- Other / Remaining Production Cost: LKR 20,000
+
+Project profit calculation remains:
+`Project Revenue - Total Production Cost - Crew Cost`
+
+It does **not** calculate:
+`Project Revenue - Production Cost - Rental Cost - Crew Cost`
+
+because rental is already included in Production Cost.
+
+### Rental to service linking
+Rental payments can also be linked to a selected Project Service / Department, e.g.:
+- Project: Match Coverage
+- Service: Live Production
+- Rental: Camera package
+
+### Financial + Reports
+- Financial page shows Rental Paid as `Included`, not as another deduction.
+- Per-project financial table shows Production Cost, Rental Included, Other Production Cost, Crew Paid and Profit/Loss.
+- Added Project Service Budget Allocation table.
+- Budget report and downloadable PDF now include a Project Service Budget Allocation section.
