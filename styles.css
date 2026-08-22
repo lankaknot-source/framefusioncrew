@@ -721,3 +721,178 @@ body.signature-open{
     margin-top:4px!important;
   }
 }
+
+
+/* v7 — payments, receipts and emailed paid status */
+.payment-summary{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+}
+.payment-summary>div{
+  border:1px solid #e1e7ee;
+  border-radius:13px;
+  background:#f8fafc;
+  padding:11px;
+}
+.payment-summary span{
+  display:block;
+  color:#778499;
+  font-size:10px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+.payment-summary strong{
+  display:block;
+  margin-top:4px;
+  color:#0f1b31;
+  font-size:16px;
+  font-weight:950;
+}
+.payment-summary .paid-value{color:#16a34a}
+.payment-summary .balance-value{color:#dc2626}
+.mail-setup-note{
+  display:flex;
+  gap:11px;
+  padding:13px;
+  border:1px solid #bfe4f4;
+  border-radius:14px;
+  background:#f0faff;
+  color:#27566d;
+}
+.mail-setup-note svg{
+  width:20px;
+  height:20px;
+  color:#1099d1;
+  flex:none;
+}
+.mail-setup-note b{display:block;color:#0f1b31;font-size:12px}
+.mail-setup-note p{margin-top:3px;font-size:11px;line-height:1.45}
+.mail-setup-note code{
+  padding:1px 4px;
+  border-radius:4px;
+  background:#dff3fb;
+  color:#087da9;
+}
+.payment-history-list{
+  display:grid;
+  gap:8px;
+}
+.payment-history-item{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:12px;
+  align-items:center;
+  padding:11px 12px;
+  border:1px solid #e3e8ef;
+  border-radius:12px;
+  background:#fbfcfe;
+}
+.payment-history-title{
+  color:#0f1b31;
+  font-size:12px;
+  font-weight:900;
+}
+.payment-history-meta{
+  margin-top:3px;
+  color:#8190a5;
+  font-size:10px;
+}
+.payment-history-amount{
+  color:#0f1b31;
+  font-size:14px;
+  font-weight:950;
+  text-align:right;
+}
+.status-pill{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:66px;
+  padding:5px 8px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:950;
+  letter-spacing:.04em;
+}
+.status-paid{background:#dcfce7;color:#15803d}
+.status-partial{background:#fef3c7;color:#a16207}
+.status-unpaid{background:#fee2e2;color:#b91c1c}
+.status-email{background:#e0f2fe;color:#0369a1}
+.crew-payment-row{
+  display:grid;
+  grid-template-columns:minmax(170px,1.3fr) minmax(110px,.7fr) minmax(110px,.7fr) minmax(100px,.6fr) auto;
+  gap:10px;
+  align-items:center;
+  padding:12px;
+  border:1px solid #e1e7ee;
+  border-radius:14px;
+  background:#fff;
+}
+.crew-payment-row:hover{background:#fbfdff}
+.crew-payment-name{
+  color:#0f1b31;
+  font-size:13px;
+  font-weight:950;
+}
+.crew-payment-role,.crew-payment-email{
+  margin-top:2px;
+  color:#8290a4;
+  font-size:10px;
+}
+.crew-payment-metric span{
+  display:block;
+  color:#8390a4;
+  font-size:9px;
+  font-weight:850;
+  text-transform:uppercase;
+}
+.crew-payment-metric strong{
+  display:block;
+  margin-top:2px;
+  color:#172033;
+  font-size:13px;
+  font-weight:950;
+}
+.receipt-type{
+  display:inline-flex;
+  padding:4px 7px;
+  border-radius:6px;
+  background:#eef4f8;
+  color:#4a6075;
+  font-size:9px;
+  font-weight:900;
+  text-transform:uppercase;
+}
+.receipt-email-state{
+  font-size:10px;
+  font-weight:850;
+}
+.receipt-email-ok{color:#15803d}
+.receipt-email-warn{color:#b45309}
+@media(max-width:1023px){
+  .sidebar nav{
+    grid-template-columns:repeat(5,1fr)!important;
+  }
+}
+@media(max-width:767px){
+  .payment-summary{
+    grid-template-columns:1fr;
+  }
+  .crew-payment-row{
+    grid-template-columns:1fr 1fr;
+  }
+  .crew-payment-row>div:first-child{
+    grid-column:1 / -1;
+  }
+  .crew-payment-row .crew-pay-action{
+    grid-column:1 / -1;
+  }
+  .crew-payment-row .crew-pay-action .btn{
+    width:100%;
+  }
+  .nav-btn span{
+    font-size:9px!important;
+  }
+}

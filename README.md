@@ -136,3 +136,33 @@ For itemized projects the system automatically:
 - On phone/app screens, Print / Download PDF / Close controls are moved to a fixed bottom action bar so they cannot disappear behind the status bar.
 - Backup files now include saved signatures.
 - See `FIREBASE_SETUP.md` before enabling Firestore access publicly.
+
+
+## v7 — Payments, PAID Receipts & Email
+
+- New **Payments & Receipts** section.
+- Record client/event payments separately, including partial payments.
+- Project payment dashboard shows total project value, amount received and outstanding balance.
+- Record crew payments from each project.
+- Crew payment status is automatic: `UNPAID`, `PARTIAL`, or `PAID`.
+- Every payment creates a receipt number and saves a receipt record in Firestore.
+- Crew and event receipt emails can be queued automatically through the Firestore `mail` collection.
+- Added receipt email settings: company name, sender email, reply-to email and footer.
+- Added client email to each project.
+- Crew email is taken from the Crew Members database and can be updated while recording payment.
+- Receipt History includes a **Resend** action.
+- New Firestore collections:
+  - `framefusion_receipts`
+  - `framefusion_settings`
+  - `mail` (email queue; managed by Firebase Trigger Email)
+- Backup/restore now includes receipts and receipt email settings.
+- See `EMAIL_RECEIPT_SETUP.md` before expecting emails to be delivered.
+
+
+## v7.1 — FrameFusion Management Email
+
+Default receipt sender and reply-to email is now:
+
+`management.framefusion@gmail.com`
+
+Use the same mailbox when configuring Firebase Trigger Email / SMTP.

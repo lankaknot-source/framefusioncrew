@@ -24,18 +24,31 @@ const db = getFirestore(firebaseApp);
 const STORAGE_KEYS = {
   crew: "framefusion_crew_v1",
   projects: "framefusion_projects_v1",
-  signatures: "framefusion_signatures_v1"
+  signatures: "framefusion_signatures_v1",
+  receipts: "framefusion_receipts_v1",
+  settings: "framefusion_settings_v1"
 };
 
 const CLOUD_COLLECTIONS = {
   crew: "framefusion_crew",
   projects: "framefusion_projects",
-  signatures: "framefusion_signatures"
+  signatures: "framefusion_signatures",
+  receipts: "framefusion_receipts",
+  settings: "framefusion_settings",
+  mail: "mail"
 };
 
 let crew = load(STORAGE_KEYS.crew, []);
 let projects = load(STORAGE_KEYS.projects, []);
 let signatureLibrary = load(STORAGE_KEYS.signatures, []);
+let receipts = load(STORAGE_KEYS.receipts, []);
+let appSettings = load(STORAGE_KEYS.settings, {
+  id:"company",
+  companyName:"FrameFusion Studio",
+  senderEmail:"management.framefusion@gmail.com",
+  replyToEmail:"management.framefusion@gmail.com",
+  footerText:"Thank you for working with FrameFusion Studio."
+});
 let cloudReady = false;
 let cloudSyncTimer = null;
 let cloudSyncInFlight = false;
@@ -58,6 +71,8 @@ function saveLocalCache(){
   localStorage.setItem(STORAGE_KEYS.crew, JSON.stringify(crew));
   localStorage.setItem(STORAGE_KEYS.projects, JSON.stringify(projects));
   localStorage.setItem(STORAGE_KEYS.signatures, JSON.stringify(signatureLibrary));
+  localStorage.setItem(STORAGE_KEYS.receipts, JSON.stringify(receipts));
+  localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(appSettings));
 }
 function save(){
   saveLocalCache();
@@ -110,7 +125,9 @@ async function syncAllToFirestore(){
     await Promise.all([
       syncOneCollection(CLOUD_COLLECTIONS.crew,crew),
       syncOneCollection(CLOUD_COLLECTIONS.projects,projects),
-      syncOneCollection(CLOUD_COLLECTIONS.signatures,signatureLibrary)
+      syncOneCollection(CLOUD_COLLECTIONS.signatures,signatureLibrary),
+      syncOneCollection(CLOUD_COLLECTIONS.receipts,receipts),
+      syncOneCollection(CLOUD_COLLECTIONS.settings,[{id:"company",...appSettings}])
     ]);
     setCloudStatus("online","Firestore Synced");
   }catch(error){
@@ -135,17 +152,23 @@ function scheduleCloudSync(){
 async function initializeFirestoreData(){
   setCloudStatus("connecting","Connecting Firestore");
   try{
-    const [cloudCrew,cloudProjects,cloudSignatures]=await Promise.all([
+    const [cloudCrew,cloudProjects,cloudSignatures,cloudReceipts,cloudSettings]=await Promise.all([
       readCloudCollection(CLOUD_COLLECTIONS.crew),
       readCloudCollection(CLOUD_COLLECTIONS.projects),
-      readCloudCollection(CLOUD_COLLECTIONS.signatures)
+      readCloudCollection(CLOUD_COLLECTIONS.signatures),
+      readCloudCollection(CLOUD_COLLECTIONS.receipts),
+      readCloudCollection(CLOUD_COLLECTIONS.settings)
     ]);
 
-    const cloudHasData=cloudCrew.length || cloudProjects.length || cloudSignatures.length;
+    const cloudHasData=cloudCrew.length || cloudProjects.length || cloudSignatures.length || cloudReceipts.length || cloudSettings.length;
     if(cloudHasData){
       crew=cloudCrew;
       projects=cloudProjects;
       signatureLibrary=cloudSignatures;
+      receipts=cloudReceipts;
+      if(cloudSettings.length){
+        appSettings={...appSettings,...cloudSettings[0],id:"company"};
+      }
       saveLocalCache();
     }
 
@@ -160,6 +183,7 @@ async function initializeFirestoreData(){
     renderDashboard();
     renderProjects();
     renderCrew();
+    renderPayments();
     setCloudStatus("online","Firestore Connected");
   }catch(error){
     console.error("Firestore connection failed:",error);
@@ -169,6 +193,7 @@ async function initializeFirestoreData(){
     renderDashboard();
     renderProjects();
     renderCrew();
+    renderPayments();
   }
 }
 function uid(prefix="id"){
@@ -217,6 +242,7 @@ function seedDemo(){
     name:"Match Live Coverage Budget",
     date:"",
     client:"",
+    clientEmail:"",
     location:"",
     revenue:120000,
     equipment:70000,
@@ -228,7 +254,8 @@ function seedDemo(){
     managerName:"",
     signatures:{director:"",manager:""},
     signatureRefs:{director:"",manager:""},
-    crew:crew.map(c=>({crewId:c.id,name:c.name,role:c.role,payment:c.rate})),
+    eventPayments:[],
+    crew:crew.map(c=>({crewId:c.id,name:c.name,role:c.role,email:c.email||"",payment:c.rate,payments:[]})),
     createdAt:Date.now(),
     updatedAt:Date.now()
   }];
@@ -257,11 +284,12 @@ function setView(view){
   const target = document.getElementById(`view-${view}`);
   if(target) target.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===view));
-  const names = {dashboard:"Dashboard",projects:"Projects",crew:"Crew Members",backup:"Backup & Restore"};
+  const names = {dashboard:"Dashboard",projects:"Projects",crew:"Crew Members",payments:"Payments & Receipts",backup:"Backup & Restore"};
   document.getElementById("pageTitle").textContent = names[view] || "FrameFusion";
   if(view==="dashboard") renderDashboard();
   if(view==="projects") renderProjects();
   if(view==="crew") renderCrew();
+  if(view==="payments") renderPayments();
   lucide.createIcons();
 }
 
@@ -312,7 +340,7 @@ function emptyState(icon,title,copy){
 
 function renderProjects(){
   const q = (document.getElementById("projectSearch")?.value || "").toLowerCase().trim();
-  const filtered = projects.filter(p => [p.name,p.client,p.location].join(" ").toLowerCase().includes(q));
+  const filtered = projects.filter(p => [p.name,p.client,p.clientEmail,p.location].join(" ").toLowerCase().includes(q));
   const grid = document.getElementById("projectsGrid");
   if(!filtered.length){
     grid.innerHTML = emptyState("folder-plus","No projects found", q ? "Try another search." : "Create your first project.");
@@ -333,6 +361,7 @@ function renderProjects(){
       </div>
       <div class="project-actions">
         <button class="btn btn-primary flex-1" onclick="openReport('${p.id}')"><i data-lucide="file-text"></i>Report</button>
+        <button class="icon-mini" title="Payments" onclick="openProjectPayments('${p.id}')"><i data-lucide="receipt-text"></i></button>
         <button class="icon-mini" title="Edit" onclick="editProject('${p.id}')"><i data-lucide="pencil"></i></button>
         <button class="icon-mini" title="Duplicate" onclick="duplicateProject('${p.id}')"><i data-lucide="copy"></i></button>
         <button class="icon-mini danger" title="Delete" onclick="deleteProject('${p.id}')"><i data-lucide="trash-2"></i></button>
@@ -340,6 +369,14 @@ function renderProjects(){
     </article>`;
   }).join("");
   lucide.createIcons();
+}
+
+function openProjectPayments(projectId){
+  setView("payments");
+  const eventSelect=document.getElementById("eventPaymentProject");
+  const crewSelect=document.getElementById("crewPaymentProject");
+  if(eventSelect){eventSelect.value=projectId;eventSelect.dispatchEvent(new Event("change"));}
+  if(crewSelect){crewSelect.value=projectId;crewSelect.dispatchEvent(new Event("change"));}
 }
 
 function renderCrew(){
@@ -400,6 +437,7 @@ function resetProjectForm(){
   document.getElementById("projectModalTitle").textContent="Create Project";
   document.getElementById("projectName").value="Match Live Coverage Budget";
   document.getElementById("projectSubtitle").value="Official Budget Breakdown & Crew Payment Allocation";
+  document.getElementById("projectClientEmail").value="";
   document.getElementById("projectDirectorName").value="";
   document.getElementById("projectManagerName").value="";
   document.getElementById("projectEquipment").value="";
@@ -419,6 +457,7 @@ function editProject(id){
   document.getElementById("projectName").value=p.name||"";
   document.getElementById("projectDate").value=p.date||"";
   document.getElementById("projectClient").value=p.client||"";
+  document.getElementById("projectClientEmail").value=p.clientEmail||"";
   document.getElementById("projectLocation").value=p.location||"";
   document.getElementById("projectRevenue").value=p.revenue||0;
   document.getElementById("projectEquipment").value=p.equipment||0;
@@ -437,7 +476,14 @@ function editProject(id){
 function duplicateProject(id){
   const p=projects.find(x=>x.id===id); if(!p) return;
   const cp=JSON.parse(JSON.stringify(p));
-  cp.id=uid("project"); cp.name=`${p.name} (Copy)`; cp.createdAt=Date.now(); cp.updatedAt=Date.now();
+  cp.id=uid("project");
+  cp.name=`${p.name} (Copy)`;
+  cp.eventPayments=[];
+  cp.signatures={director:"",manager:""};
+  cp.signatureRefs={director:"",manager:""};
+  cp.crew=(cp.crew||[]).map(m=>({...m,payments:[]}));
+  cp.createdAt=Date.now();
+  cp.updatedAt=Date.now();
   projects.push(cp); save(); renderProjects(); renderDashboard(); toast("Project duplicated");
 }
 function deleteProject(id){
@@ -550,7 +596,7 @@ function toggleCrewForProject(id){
   if(idx>=0) editingProjectCrew.splice(idx,1);
   else{
     const c=crew.find(x=>x.id===id);
-    if(c) editingProjectCrew.push({crewId:c.id,name:c.name,role:c.role,payment:Number(c.rate||0)});
+    if(c) editingProjectCrew.push({crewId:c.id,name:c.name,role:c.role,email:c.email||"",payment:Number(c.rate||0),payments:[]});
   }
   renderProjectCrewRows(); updateProjectCalcs(); openCrewPicker();
 }
@@ -567,6 +613,479 @@ function updateProjectCalcs(){
   renderEquipmentItemsTotalOnly();
   const el=document.getElementById("calcProfit");
   if(el){el.className=profit<0?"text-red-500":"text-ffgreen";}
+}
+
+
+
+function todayInputValue(){
+  const d=new Date();
+  const local=new Date(d.getTime()-d.getTimezoneOffset()*60000);
+  return local.toISOString().slice(0,10);
+}
+function normalizedEmail(v){
+  return String(v||"").trim().toLowerCase();
+}
+function isEmail(v){
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v||"").trim());
+}
+function eventPaymentsTotal(p){
+  return (p?.eventPayments||[]).reduce((sum,x)=>sum+Number(x.amount||0),0);
+}
+function crewPaymentsTotal(member){
+  return (member?.payments||[]).reduce((sum,x)=>sum+Number(x.amount||0),0);
+}
+function paymentStatus(totalDue,totalPaid){
+  const due=Math.max(0,Number(totalDue||0));
+  const paid=Math.max(0,Number(totalPaid||0));
+  if(due>0 && paid>=due) return "PAID";
+  if(paid>0) return "PARTIAL";
+  return "UNPAID";
+}
+function statusPill(status){
+  const safe=String(status||"UNPAID").toUpperCase();
+  const cls=safe==="PAID"?"status-paid":safe==="PARTIAL"?"status-partial":"status-unpaid";
+  return `<span class="status-pill ${cls}">${escapeHtml(safe)}</span>`;
+}
+function paymentReceiptNumber(type){
+  const d=new Date();
+  const yy=String(d.getFullYear()).slice(-2);
+  const mm=String(d.getMonth()+1).padStart(2,"0");
+  const dd=String(d.getDate()).padStart(2,"0");
+  const suffix=String(Date.now()).slice(-6);
+  return `FF-${type==="crew"?"CRW":"EVT"}-${yy}${mm}${dd}-${suffix}`;
+}
+function receiptPartyLabel(receipt){
+  return receipt.type==="crew" ? "Crew Member" : "Client / Event";
+}
+function receiptDirectionLabel(receipt){
+  return receipt.type==="crew" ? "Payment Made" : "Payment Received";
+}
+function buildReceiptEmailHtml(receipt){
+  const company=escapeHtml(appSettings.companyName||"FrameFusion Studio");
+  const party=escapeHtml(receipt.partyName||"");
+  const project=escapeHtml(receipt.projectName||"");
+  const note=escapeHtml(receipt.note||"");
+  const method=escapeHtml(receipt.method||"");
+  const status=escapeHtml(receipt.status||"PAID");
+  const direction=receiptDirectionLabel(receipt);
+  const balance=Math.max(0,Number(receipt.balance||0));
+  return `
+  <div style="margin:0;background:#eef2f7;padding:24px;font-family:Arial,sans-serif;color:#172033">
+    <div style="max-width:620px;margin:0 auto;background:#fff;border-radius:18px;overflow:hidden;border:1px solid #dce3eb">
+      <div style="background:#0f1b31;padding:24px 26px">
+        <div style="font-size:24px;font-weight:900;color:#14a9e7">FrameFusion Studio</div>
+        <div style="margin-top:5px;color:#fff;font-size:15px;font-weight:700">${escapeHtml(direction)} Receipt</div>
+      </div>
+      <div style="padding:24px 26px">
+        <div style="display:inline-block;padding:7px 12px;border-radius:999px;background:${status==="PAID"?"#dcfce7":"#fef3c7"};color:${status==="PAID"?"#15803d":"#a16207"};font-size:12px;font-weight:900">${status}</div>
+        <h2 style="margin:18px 0 4px;font-size:22px;color:#0f1b31">${escapeHtml(receipt.receiptNo)}</h2>
+        <p style="margin:0 0 20px;color:#748197;font-size:13px">${escapeHtml(receipt.date||"")}</p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+          <tr><td style="padding:9px 0;color:#778499">Project / Event</td><td style="padding:9px 0;text-align:right;font-weight:700">${project}</td></tr>
+          <tr><td style="padding:9px 0;color:#778499">${escapeHtml(receiptPartyLabel(receipt))}</td><td style="padding:9px 0;text-align:right;font-weight:700">${party}</td></tr>
+          <tr><td style="padding:9px 0;color:#778499">Payment Method</td><td style="padding:9px 0;text-align:right;font-weight:700">${method}</td></tr>
+          <tr><td style="padding:9px 0;color:#778499">Amount</td><td style="padding:9px 0;text-align:right;font-size:18px;font-weight:900;color:#0f1b31">${money(receipt.amount)}</td></tr>
+          <tr><td style="padding:9px 0;color:#778499">Total Paid</td><td style="padding:9px 0;text-align:right;font-weight:800">${money(receipt.totalPaid)}</td></tr>
+          <tr><td style="padding:9px 0;color:#778499">Balance</td><td style="padding:9px 0;text-align:right;font-weight:800">${money(balance)}</td></tr>
+        </table>
+        ${note?`<div style="margin-top:18px;padding:12px;border-radius:10px;background:#f7f9fc;color:#536176;font-size:13px"><b>Reference:</b> ${note}</div>`:""}
+        <p style="margin:24px 0 0;color:#778499;font-size:12px;line-height:1.55">${escapeHtml(appSettings.footerText||"Thank you.")}</p>
+      </div>
+      <div style="padding:14px 26px;background:#f8fafc;color:#95a1b2;font-size:11px;text-align:center">${company} • Automated Payment Receipt</div>
+    </div>
+  </div>`;
+}
+function buildReceiptEmailText(receipt){
+  return [
+    `${appSettings.companyName||"FrameFusion Studio"} - ${receiptDirectionLabel(receipt)} Receipt`,
+    `Receipt: ${receipt.receiptNo}`,
+    `Status: ${receipt.status}`,
+    `Project: ${receipt.projectName}`,
+    `${receiptPartyLabel(receipt)}: ${receipt.partyName}`,
+    `Date: ${receipt.date}`,
+    `Method: ${receipt.method}`,
+    `Amount: ${money(receipt.amount)}`,
+    `Total Paid: ${money(receipt.totalPaid)}`,
+    `Balance: ${money(Math.max(0,Number(receipt.balance||0)))}`,
+    receipt.note ? `Reference: ${receipt.note}` : "",
+    "",
+    appSettings.footerText||"Thank you."
+  ].filter(Boolean).join("\n");
+}
+async function queueReceiptEmail(receipt){
+  if(!receipt?.email || !isEmail(receipt.email)){
+    return {ok:false,error:"Valid recipient email is required."};
+  }
+  if(!cloudReady){
+    return {ok:false,error:"Firestore is offline. Receipt saved, but email was not queued."};
+  }
+  const mailId=uid("mail");
+  const senderEmail=String(appSettings.senderEmail||"").trim();
+  const replyTo=String(appSettings.replyToEmail||senderEmail||"").trim();
+  const payload={
+    to:[receipt.email],
+    receiptId:receipt.id,
+    receiptNo:receipt.receiptNo,
+    receiptType:receipt.type,
+    createdAt:Date.now(),
+    message:{
+      subject:`${appSettings.companyName||"FrameFusion Studio"} Receipt ${receipt.receiptNo} - ${receipt.status}`,
+      text:buildReceiptEmailText(receipt),
+      html:buildReceiptEmailHtml(receipt)
+    }
+  };
+  if(senderEmail) payload.from=`${appSettings.companyName||"FrameFusion Studio"} <${senderEmail}>`;
+  if(replyTo) payload.replyTo=replyTo;
+
+  try{
+    await setDoc(doc(db,CLOUD_COLLECTIONS.mail,mailId),payload);
+    receipt.emailQueued=true;
+    receipt.mailId=mailId;
+    receipt.emailQueuedAt=Date.now();
+    receipt.emailError="";
+    save();
+    return {ok:true,mailId};
+  }catch(error){
+    console.error("Receipt email queue failed:",error);
+    receipt.emailQueued=false;
+    receipt.emailError=error?.message||"Email queue failed";
+    save();
+    return {ok:false,error:receipt.emailError};
+  }
+}
+function receiptRecord(data){
+  const item={
+    id:uid("receipt"),
+    receiptNo:paymentReceiptNumber(data.type),
+    type:data.type,
+    projectId:data.projectId,
+    projectName:data.projectName,
+    partyName:data.partyName,
+    email:normalizedEmail(data.email),
+    amount:Number(data.amount||0),
+    date:data.date||todayInputValue(),
+    method:data.method||"Bank Transfer",
+    note:data.note||"",
+    status:data.status||"PAID",
+    totalDue:Number(data.totalDue||0),
+    totalPaid:Number(data.totalPaid||0),
+    balance:Number(data.balance||0),
+    emailQueued:false,
+    mailId:"",
+    emailError:"",
+    createdAt:Date.now()
+  };
+  receipts.unshift(item);
+  return item;
+}
+function findCrewEmail(member){
+  const live=crew.find(c=>c.id===member?.crewId);
+  return normalizedEmail(live?.email || member?.email || "");
+}
+function fillProjectSelect(selectId){
+  const el=document.getElementById(selectId);
+  if(!el) return;
+  const current=el.value;
+  if(!projects.length){
+    el.innerHTML='<option value="">No projects available</option>';
+    return;
+  }
+  el.innerHTML=projects
+    .slice()
+    .sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0))
+    .map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
+  if(projects.some(p=>p.id===current)) el.value=current;
+}
+function loadReceiptSettingsForm(){
+  const set=(id,value)=>{const el=document.getElementById(id);if(el)el.value=value||""};
+  set("receiptCompanyName",appSettings.companyName||"FrameFusion Studio");
+  set("receiptSenderEmail",appSettings.senderEmail||"");
+  set("receiptReplyToEmail",appSettings.replyToEmail||"");
+  set("receiptFooterText",appSettings.footerText||"");
+}
+function saveReceiptSettings(){
+  appSettings={
+    ...appSettings,
+    id:"company",
+    companyName:document.getElementById("receiptCompanyName").value.trim()||"FrameFusion Studio",
+    senderEmail:normalizedEmail(document.getElementById("receiptSenderEmail").value)||"management.framefusion@gmail.com",
+    replyToEmail:normalizedEmail(document.getElementById("receiptReplyToEmail").value)||"management.framefusion@gmail.com",
+    footerText:document.getElementById("receiptFooterText").value.trim()||"Thank you."
+  };
+  save();
+  toast("Receipt email settings saved");
+}
+function renderEventPaymentSection(){
+  const select=document.getElementById("eventPaymentProject");
+  if(!select) return;
+  fillProjectSelect("eventPaymentProject");
+  const p=projects.find(x=>x.id===select.value) || projects[0];
+  if(p && select.value!==p.id) select.value=p.id;
+
+  const summary=document.getElementById("eventPaymentSummary");
+  const history=document.getElementById("eventPaymentHistory");
+  const email=document.getElementById("eventPaymentEmail");
+  if(!p){
+    summary.innerHTML=emptyState("folder-plus","No project","Create a project before recording payments.");
+    history.innerHTML="";
+    return;
+  }
+  const paid=eventPaymentsTotal(p);
+  const balance=Math.max(0,Number(p.revenue||0)-paid);
+  summary.innerHTML=`
+    <div><span>Project Total</span><strong>${money(p.revenue)}</strong></div>
+    <div><span>Received</span><strong class="paid-value">${money(paid)}</strong></div>
+    <div><span>Balance</span><strong class="${balance>0?"balance-value":"paid-value"}">${money(balance)}</strong></div>`;
+  if(email && (!email.value || email.dataset.projectId!==p.id)){
+    email.value=p.clientEmail||"";
+    email.dataset.projectId=p.id;
+  }
+
+  const items=(p.eventPayments||[]).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  history.innerHTML=items.length ? `
+    <div class="text-xs font-black text-ffnavy mb-2">Recent payments for this project</div>
+    <div class="payment-history-list">
+      ${items.slice(0,5).map(x=>`
+        <div class="payment-history-item">
+          <div>
+            <div class="payment-history-title">${escapeHtml(x.receiptNo||"Payment")}</div>
+            <div class="payment-history-meta">${escapeHtml(x.date||"")} • ${escapeHtml(x.method||"")} ${x.note?`• ${escapeHtml(x.note)}`:""}</div>
+          </div>
+          <div>
+            <div class="payment-history-amount">${money(x.amount)}</div>
+            <div class="mt-1 text-right">${statusPill(x.status||"PARTIAL")}</div>
+          </div>
+        </div>`).join("")}
+    </div>` : `<div class="text-sm text-slate-400 mt-3">No event payments recorded yet.</div>`;
+}
+async function saveEventPayment(){
+  const projectId=document.getElementById("eventPaymentProject").value;
+  const p=projects.find(x=>x.id===projectId);
+  if(!p){toast("Select a project");return;}
+
+  const amount=Number(document.getElementById("eventPaymentAmount").value||0);
+  const date=document.getElementById("eventPaymentDate").value||todayInputValue();
+  const method=document.getElementById("eventPaymentMethod").value||"Bank Transfer";
+  const email=normalizedEmail(document.getElementById("eventPaymentEmail").value);
+  const note=document.getElementById("eventPaymentNote").value.trim();
+
+  if(amount<=0){toast("Enter the amount received");return;}
+  if(!isEmail(email)){toast("Enter a valid client email");return;}
+
+  const before=eventPaymentsTotal(p);
+  const after=before+amount;
+  const balance=Math.max(0,Number(p.revenue||0)-after);
+  const status=paymentStatus(Number(p.revenue||0),after);
+
+  const receipt=receiptRecord({
+    type:"event",
+    projectId:p.id,
+    projectName:p.name,
+    partyName:p.client||"Client",
+    email,
+    amount,
+    date,
+    method,
+    note,
+    status,
+    totalDue:Number(p.revenue||0),
+    totalPaid:after,
+    balance
+  });
+
+  p.clientEmail=email;
+  p.eventPayments=p.eventPayments||[];
+  p.eventPayments.push({
+    id:uid("eventpay"),
+    receiptId:receipt.id,
+    receiptNo:receipt.receiptNo,
+    amount,
+    date,
+    method,
+    email,
+    note,
+    status,
+    createdAt:Date.now()
+  });
+  p.updatedAt=Date.now();
+  save();
+
+  document.getElementById("eventPaymentAmount").value="";
+  document.getElementById("eventPaymentNote").value="";
+  renderPayments();
+  const result=await queueReceiptEmail(receipt);
+  renderReceiptHistory();
+  toast(result.ok ? `Payment saved. Receipt ${receipt.receiptNo} queued.` : `Payment saved. ${result.error}`);
+}
+function renderCrewPayments(){
+  const select=document.getElementById("crewPaymentProject");
+  const list=document.getElementById("crewPaymentsList");
+  if(!select||!list) return;
+  fillProjectSelect("crewPaymentProject");
+  const p=projects.find(x=>x.id===select.value)||projects[0];
+  if(p && select.value!==p.id) select.value=p.id;
+  if(!p){
+    list.innerHTML=emptyState("users","No project","Create a project and assign crew first.");
+    return;
+  }
+  if(!(p.crew||[]).length){
+    list.innerHTML=emptyState("users","No assigned crew","Assign crew members to this project first.");
+    return;
+  }
+
+  list.innerHTML=p.crew.map((m,index)=>{
+    const due=Number(m.payment||0);
+    const paid=crewPaymentsTotal(m);
+    const balance=Math.max(0,due-paid);
+    const status=paymentStatus(due,paid);
+    const email=findCrewEmail(m);
+    return `<div class="crew-payment-row">
+      <div>
+        <div class="crew-payment-name">${escapeHtml(m.name)}</div>
+        <div class="crew-payment-role">${escapeHtml(m.role||"")}</div>
+        <div class="crew-payment-email">${escapeHtml(email||"No email saved")}</div>
+      </div>
+      <div class="crew-payment-metric"><span>Due</span><strong>${money(due)}</strong></div>
+      <div class="crew-payment-metric"><span>Paid</span><strong>${money(paid)}</strong></div>
+      <div>${statusPill(status)}</div>
+      <div class="crew-pay-action">
+        <button class="btn ${balance<=0?"btn-light":"btn-primary"}" onclick="openCrewPayment('${p.id}',${index})">
+          <i data-lucide="${balance<=0?"receipt-text":"badge-dollar-sign"}"></i>${balance<=0?"Add Payment":"Pay & Receipt"}
+        </button>
+      </div>
+    </div>`;
+  }).join("");
+  lucide.createIcons();
+}
+function openCrewPayment(projectId,index){
+  const p=projects.find(x=>x.id===projectId);
+  const m=p?.crew?.[index];
+  if(!p||!m) return;
+  const due=Number(m.payment||0);
+  const paid=crewPaymentsTotal(m);
+  const balance=Math.max(0,due-paid);
+  document.getElementById("crewPayProjectId").value=p.id;
+  document.getElementById("crewPayMemberIndex").value=String(index);
+  document.getElementById("crewPaymentModalTitle").textContent=`Pay ${m.name}`;
+  document.getElementById("crewPayAmount").value=balance>0?balance:due;
+  document.getElementById("crewPayDate").value=todayInputValue();
+  document.getElementById("crewPayMethod").value="Bank Transfer";
+  document.getElementById("crewPayEmail").value=findCrewEmail(m);
+  document.getElementById("crewPayNote").value="";
+  document.getElementById("crewPaySummary").innerHTML=`
+    <div><span>Allocated</span><strong>${money(due)}</strong></div>
+    <div><span>Already Paid</span><strong class="paid-value">${money(paid)}</strong></div>
+    <div><span>Balance</span><strong class="${balance>0?"balance-value":"paid-value"}">${money(balance)}</strong></div>`;
+  openModal("crewPaymentModal");
+  lucide.createIcons();
+}
+async function saveCrewPayment(){
+  const projectId=document.getElementById("crewPayProjectId").value;
+  const index=Number(document.getElementById("crewPayMemberIndex").value);
+  const p=projects.find(x=>x.id===projectId);
+  const m=p?.crew?.[index];
+  if(!p||!m){toast("Crew payment record not found");return;}
+
+  const amount=Number(document.getElementById("crewPayAmount").value||0);
+  const date=document.getElementById("crewPayDate").value||todayInputValue();
+  const method=document.getElementById("crewPayMethod").value||"Bank Transfer";
+  const email=normalizedEmail(document.getElementById("crewPayEmail").value);
+  const note=document.getElementById("crewPayNote").value.trim();
+
+  if(amount<=0){toast("Enter the amount paid");return;}
+  if(!isEmail(email)){toast("Enter a valid crew email");return;}
+
+  const due=Number(m.payment||0);
+  const before=crewPaymentsTotal(m);
+  const after=before+amount;
+  const balance=Math.max(0,due-after);
+  const status=paymentStatus(due,after);
+
+  const receipt=receiptRecord({
+    type:"crew",
+    projectId:p.id,
+    projectName:p.name,
+    partyName:m.name,
+    email,
+    amount,
+    date,
+    method,
+    note,
+    status,
+    totalDue:due,
+    totalPaid:after,
+    balance
+  });
+
+  m.email=email;
+  m.payments=m.payments||[];
+  m.payments.push({
+    id:uid("crewpay"),
+    receiptId:receipt.id,
+    receiptNo:receipt.receiptNo,
+    amount,
+    date,
+    method,
+    email,
+    note,
+    status,
+    createdAt:Date.now()
+  });
+
+  const liveCrew=crew.find(c=>c.id===m.crewId);
+  if(liveCrew && !liveCrew.email) liveCrew.email=email;
+  p.updatedAt=Date.now();
+  save();
+  closeModal("crewPaymentModal");
+  renderPayments();
+  renderCrew();
+  const result=await queueReceiptEmail(receipt);
+  renderReceiptHistory();
+  toast(result.ok ? `${m.name} payment saved as ${status}. Receipt queued.` : `Payment saved. ${result.error}`);
+}
+function renderReceiptHistory(){
+  const wrap=document.getElementById("receiptHistory");
+  if(!wrap) return;
+  const list=receipts.slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  if(!list.length){
+    wrap.innerHTML=emptyState("receipt-text","No receipts yet","Payment receipts will appear here.");
+    lucide.createIcons();
+    return;
+  }
+  wrap.innerHTML=`<table class="data-table">
+    <thead><tr><th>Receipt</th><th>Type</th><th>Project / Person</th><th>Amount</th><th>Status</th><th>Email</th><th style="text-align:right">Action</th></tr></thead>
+    <tbody>${list.map(r=>`
+      <tr>
+        <td><b class="text-ffnavy">${escapeHtml(r.receiptNo||"")}</b><div class="text-xs text-slate-400">${escapeHtml(r.date||"")}</div></td>
+        <td><span class="receipt-type">${r.type==="crew"?"Crew":"Event"}</span></td>
+        <td><div class="font-bold">${escapeHtml(r.projectName||"")}</div><div class="text-xs text-slate-400">${escapeHtml(r.partyName||"")}</div></td>
+        <td><b>${money(r.amount)}</b></td>
+        <td>${statusPill(r.status)}</td>
+        <td><div>${escapeHtml(r.email||"—")}</div><div class="receipt-email-state ${r.emailQueued?"receipt-email-ok":"receipt-email-warn"}">${r.emailQueued?"Queued / Sent by Firebase":"Not queued"}</div></td>
+        <td><div class="flex justify-end">
+          <button class="btn btn-light" onclick="resendReceipt('${r.id}')"><i data-lucide="send"></i>Resend</button>
+        </div></td>
+      </tr>`).join("")}</tbody>
+  </table>`;
+  lucide.createIcons();
+}
+async function resendReceipt(receiptId){
+  const r=receipts.find(x=>x.id===receiptId);
+  if(!r) return;
+  const result=await queueReceiptEmail(r);
+  renderReceiptHistory();
+  toast(result.ok ? `Receipt ${r.receiptNo} queued again` : result.error);
+}
+function renderPayments(){
+  if(!document.getElementById("view-payments")) return;
+  loadReceiptSettingsForm();
+  fillProjectSelect("eventPaymentProject");
+  fillProjectSelect("crewPaymentProject");
+  const date=document.getElementById("eventPaymentDate");
+  if(date && !date.value) date.value=todayInputValue();
+  renderEventPaymentSection();
+  renderCrewPayments();
+  renderReceiptHistory();
 }
 
 
@@ -1468,7 +1987,7 @@ async function downloadActiveReport(){
 
 
 function exportBackup(){
-  const data={app:"FrameFusion Studio Budget & Crew Manager",version:2,exportedAt:new Date().toISOString(),crew,projects,signatureLibrary};
+  const data={app:"FrameFusion Studio Budget & Crew Manager",version:3,exportedAt:new Date().toISOString(),crew,projects,signatureLibrary,receipts,appSettings};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
@@ -1486,8 +2005,10 @@ function restoreBackup(file){
       crew=data.crew;
       projects=data.projects;
       signatureLibrary=Array.isArray(data.signatureLibrary)?data.signatureLibrary:[];
+      receipts=Array.isArray(data.receipts)?data.receipts:[];
+      appSettings=data.appSettings&&typeof data.appSettings==="object"?{...appSettings,...data.appSettings,id:"company"}:appSettings;
       save();
-      renderDashboard();renderProjects();renderCrew();
+      renderDashboard();renderProjects();renderCrew();renderPayments();
       toast("Backup restored and queued for Firestore sync");
     }catch(e){ alert("Invalid FrameFusion backup file."); }
   };
@@ -1511,6 +2032,7 @@ document.addEventListener("DOMContentLoaded",()=>{
 
   document.querySelector('[data-action="new-project"]').addEventListener("click",newProject);
   document.querySelector('[data-action="new-crew"]').addEventListener("click",newCrew);
+  document.querySelector('[data-action="payments"]').addEventListener("click",()=>setView("payments"));
   document.querySelector('[data-action="backup"]').addEventListener("click",exportBackup);
 
   document.getElementById("crewForm").addEventListener("submit",(e)=>{
@@ -1538,6 +2060,7 @@ document.addEventListener("DOMContentLoaded",()=>{
       name:document.getElementById("projectName").value.trim(),
       date:document.getElementById("projectDate").value,
       client:document.getElementById("projectClient").value.trim(),
+      clientEmail:document.getElementById("projectClientEmail").value.trim(),
       location:document.getElementById("projectLocation").value.trim(),
       revenue:Number(document.getElementById("projectRevenue").value||0),
       equipmentMode:currentEquipmentMode(),
@@ -1553,6 +2076,7 @@ document.addEventListener("DOMContentLoaded",()=>{
       managerName:document.getElementById("projectManagerName").value.trim(),
       signatures:JSON.parse(JSON.stringify(old?.signatures||{director:"",manager:""})),
       signatureRefs:JSON.parse(JSON.stringify(old?.signatureRefs||{director:"",manager:""})),
+      eventPayments:JSON.parse(JSON.stringify(old?.eventPayments||[])),
       crew:JSON.parse(JSON.stringify(editingProjectCrew)),
       createdAt:old?.createdAt||Date.now(),
       updatedAt:Date.now()
@@ -1579,6 +2103,16 @@ document.addEventListener("DOMContentLoaded",()=>{
   document.getElementById("signatureSaveBtn").addEventListener("click",saveSignatureFromPad);
   document.getElementById("useSavedSignatureBtn").addEventListener("click",useSelectedSignature);
 
+  document.getElementById("saveReceiptSettingsBtn").addEventListener("click",saveReceiptSettings);
+  document.getElementById("eventPaymentProject").addEventListener("change",()=>{
+    const email=document.getElementById("eventPaymentEmail");
+    if(email){email.value="";email.dataset.projectId="";}
+    renderEventPaymentSection();
+  });
+  document.getElementById("crewPaymentProject").addEventListener("change",renderCrewPayments);
+  document.getElementById("saveEventPaymentBtn").addEventListener("click",saveEventPayment);
+  document.getElementById("saveCrewPaymentBtn").addEventListener("click",saveCrewPayment);
+
   document.getElementById("exportBackupBtn").addEventListener("click",exportBackup);
   document.getElementById("restoreInput").addEventListener("change",e=>restoreBackup(e.target.files[0]));
 
@@ -1595,6 +2129,9 @@ window.editProject=editProject;
 window.duplicateProject=duplicateProject;
 window.deleteProject=deleteProject;
 window.openReport=openReport;
+window.openProjectPayments=openProjectPayments;
+window.openCrewPayment=openCrewPayment;
+window.resendReceipt=resendReceipt;
 window.openSignaturePad=openSignaturePad;
 window.useSelectedSignature=useSelectedSignature;
 window.updateEquipmentName=updateEquipmentName;

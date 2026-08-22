@@ -52,6 +52,9 @@
         <button class="nav-btn" data-view="crew">
           <i data-lucide="users"></i><span>Crew Members</span>
         </button>
+        <button class="nav-btn" data-view="payments">
+          <i data-lucide="receipt-text"></i><span>Payments</span>
+        </button>
         <button class="nav-btn" data-view="backup">
           <i data-lucide="database-backup"></i><span>Backup & Restore</span>
         </button>
@@ -128,6 +131,11 @@
                   <span><b>Add Crew Member</b><small>Save to your crew database</small></span>
                   <i data-lucide="chevron-right"></i>
                 </button>
+                <button class="quick-card" data-action="payments">
+                  <span class="quick-icon"><i data-lucide="receipt-text"></i></span>
+                  <span><b>Payments & Receipts</b><small>Record payments and email receipts</small></span>
+                  <i data-lucide="chevron-right"></i>
+                </button>
                 <button class="quick-card" data-action="backup">
                   <span class="quick-icon"><i data-lucide="download"></i></span>
                   <span><b>Export Backup</b><small>Download all local data</small></span>
@@ -178,12 +186,133 @@
           </div>
         </div>
 
+
+        <!-- Payments & Receipts -->
+        <div id="view-payments" class="app-view hidden">
+          <div class="grid xl:grid-cols-[.82fr_1.18fr] gap-6">
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Receipt Email Settings</h3>
+                  <p>These details are used on payment receipt emails.</p>
+                </div>
+              </div>
+
+              <div class="grid gap-4 mt-5">
+                <label class="field">
+                  <span>Company / Sender Name</span>
+                  <input id="receiptCompanyName" placeholder="FrameFusion Studio" />
+                </label>
+                <label class="field">
+                  <span>Sender Email</span>
+                  <input id="receiptSenderEmail" type="email" placeholder="management.framefusion@gmail.com" />
+                </label>
+                <label class="field">
+                  <span>Reply-To Email</span>
+                  <input id="receiptReplyToEmail" type="email" placeholder="management.framefusion@gmail.com" />
+                </label>
+                <label class="field">
+                  <span>Receipt Footer</span>
+                  <textarea id="receiptFooterText" rows="3" placeholder="Thank you."></textarea>
+                </label>
+                <button id="saveReceiptSettingsBtn" type="button" class="btn btn-primary">
+                  <i data-lucide="save"></i>Save Email Settings
+                </button>
+              </div>
+
+              <div class="mail-setup-note mt-5">
+                <i data-lucide="mail-check"></i>
+                <div>
+                  <b>Email delivery</b>
+                  <p>This app writes receipt emails to the Firestore <code>mail</code> collection. Firebase Trigger Email must be installed and connected to your SMTP account.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Event / Client Payment</h3>
+                  <p>Record any amount received and automatically create a receipt.</p>
+                </div>
+              </div>
+
+              <div class="grid md:grid-cols-2 gap-4 mt-5">
+                <label class="field md:col-span-2">
+                  <span>Project *</span>
+                  <select id="eventPaymentProject"></select>
+                </label>
+
+                <div id="eventPaymentSummary" class="payment-summary md:col-span-2"></div>
+
+                <label class="field">
+                  <span>Amount Received (LKR) *</span>
+                  <input id="eventPaymentAmount" type="number" min="1" step="1" inputmode="numeric" placeholder="25000" />
+                </label>
+                <label class="field">
+                  <span>Payment Date *</span>
+                  <input id="eventPaymentDate" type="date" />
+                </label>
+                <label class="field">
+                  <span>Payment Method</span>
+                  <select id="eventPaymentMethod">
+                    <option>Bank Transfer</option>
+                    <option>Cash</option>
+                    <option>Cheque</option>
+                    <option>Card</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Client Email *</span>
+                  <input id="eventPaymentEmail" type="email" placeholder="client@example.com" />
+                </label>
+                <label class="field md:col-span-2">
+                  <span>Note / Reference</span>
+                  <input id="eventPaymentNote" placeholder="Bank reference, cheque no, advance payment..." />
+                </label>
+                <div class="md:col-span-2">
+                  <button id="saveEventPaymentBtn" type="button" class="btn btn-primary w-full">
+                    <i data-lucide="mail-plus"></i>Save Payment & Email Receipt
+                  </button>
+                </div>
+              </div>
+
+              <div id="eventPaymentHistory" class="mt-5"></div>
+            </div>
+          </div>
+
+          <div class="panel mt-6">
+            <div class="panel-head flex-col md:flex-row md:items-center gap-4">
+              <div>
+                <h3>Crew Payments</h3>
+                <p>Mark crew payments as paid/partial and send a receipt to their email.</p>
+              </div>
+              <label class="field md:ml-auto w-full md:w-80">
+                <span>Project</span>
+                <select id="crewPaymentProject"></select>
+              </label>
+            </div>
+            <div id="crewPaymentsList" class="grid gap-3 mt-5"></div>
+          </div>
+
+          <div class="panel mt-6">
+            <div class="panel-head">
+              <div>
+                <h3>Receipt History</h3>
+                <p>All event and crew payment receipts saved in Firestore.</p>
+              </div>
+            </div>
+            <div id="receiptHistory" class="table-wrap mt-5"></div>
+          </div>
+        </div>
+
         <!-- Backup -->
         <div id="view-backup" class="app-view hidden">
           <div class="grid lg:grid-cols-2 gap-6">
             <div class="panel">
               <div class="panel-head">
-                <div><h3>Export Backup</h3><p>Download projects, crew and saved signatures as a JSON file.</p></div>
+                <div><h3>Export Backup</h3><p>Download projects, crew, payments, receipts, settings and saved signatures as a JSON file.</p></div>
               </div>
               <div class="backup-card">
                 <span class="backup-icon"><i data-lucide="download"></i></span>
@@ -287,6 +416,10 @@
             <span>Client / Event</span>
             <input id="projectClient" placeholder="Optional" />
           </label>
+          <label class="field">
+            <span>Client Email</span>
+            <input id="projectClientEmail" type="email" placeholder="client@example.com" />
+          </label>
           <label class="field md:col-span-2">
             <span>Location / Venue</span>
             <input id="projectLocation" placeholder="Optional" />
@@ -387,6 +520,60 @@
       <div id="crewPickerList" class="grid sm:grid-cols-2 gap-3 mt-5"></div>
       <div class="flex justify-end mt-5">
         <button class="btn btn-primary" data-close="crewPickerModal">Done</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Crew Payment Receipt Modal -->
+  <div id="crewPaymentModal" class="modal hidden no-print">
+    <div class="modal-card max-w-2xl">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Crew Payment Receipt</p>
+          <h3 id="crewPaymentModalTitle">Pay Crew Member</h3>
+        </div>
+        <button class="icon-btn" data-close="crewPaymentModal"><i data-lucide="x"></i></button>
+      </div>
+
+      <input id="crewPayProjectId" type="hidden" />
+      <input id="crewPayMemberIndex" type="hidden" />
+
+      <div id="crewPaySummary" class="payment-summary mt-5"></div>
+
+      <div class="grid md:grid-cols-2 gap-4 mt-5">
+        <label class="field">
+          <span>Amount Paid (LKR) *</span>
+          <input id="crewPayAmount" type="number" min="1" step="1" inputmode="numeric" />
+        </label>
+        <label class="field">
+          <span>Payment Date *</span>
+          <input id="crewPayDate" type="date" />
+        </label>
+        <label class="field">
+          <span>Payment Method</span>
+          <select id="crewPayMethod">
+            <option>Bank Transfer</option>
+            <option>Cash</option>
+            <option>Cheque</option>
+            <option>Other</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Crew Email *</span>
+          <input id="crewPayEmail" type="email" placeholder="crew@example.com" />
+        </label>
+        <label class="field md:col-span-2">
+          <span>Note / Reference</span>
+          <input id="crewPayNote" placeholder="Bank reference, cash payment, etc." />
+        </label>
+      </div>
+
+      <div class="flex flex-wrap justify-end gap-2 mt-6">
+        <button type="button" class="btn btn-light" data-close="crewPaymentModal">Cancel</button>
+        <button id="saveCrewPaymentBtn" type="button" class="btn btn-primary">
+          <i data-lucide="badge-check"></i>Save Payment & Email Receipt
+        </button>
       </div>
     </div>
   </div>
