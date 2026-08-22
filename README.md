@@ -196,3 +196,21 @@ Use the same mailbox when configuring Firebase Trigger Email / SMTP.
 - Rental summary shows total rental value, received income, outstanding amount and deposits.
 - Crew Payment Totals shows actual cumulative payments to each crew member across all projects.
 - Backup/restore now includes rental records.
+
+
+## v10 — Rental Payments Corrected as OUTGOING Expenses
+
+Important correction:
+- **Rental Payments** now means money FrameFusion pays to outside equipment/service rental suppliers.
+- It is no longer treated as customer rental income.
+- Each rental expense can be linked to a Project/Event or saved as General / No Project.
+- Supplier/owner details are stored: name, email, phone.
+- The EmailJS receipt is sent to the supplier as proof of the payment FrameFusion made.
+- Financial calculations subtract rental payments as expenses.
+- Per-project Profit/Loss now calculates:
+  `Actual Project Income Received - Equipment Costs - Crew Payments - Rental Payments linked to that project`.
+- Overall Net Profit/Loss now calculates:
+  `All Project Income Received - Equipment Costs - Crew Payments - All Rental Payments`.
+- Refundable security deposits are shown separately and are **not** counted as profit/loss expenses.
+- Rental expense summary shows total rental cost, paid to suppliers, still payable, and refundable deposits.
+- Existing v9 rental records are migrated from customer fields to supplier fields to avoid breaking the app.

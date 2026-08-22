@@ -159,6 +159,28 @@ function scheduleCloudSync(){
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer=setTimeout(syncAllToFirestore,550);
 }
+
+function migrateRentalExpenseRecords(){
+  let changed=false;
+  rentals=rentals.map(r=>{
+    if(r.supplierName) return r;
+    if(r.customerName || r.customerEmail || r.customerPhone){
+      changed=true;
+      return {
+        ...r,
+        supplierName:r.customerName||"",
+        supplierEmail:r.customerEmail||"",
+        supplierPhone:r.customerPhone||"",
+        projectId:r.projectId||"",
+        projectName:r.projectName||"",
+        migratedFromV9:true
+      };
+    }
+    return r;
+  });
+  if(changed) saveLocalCache();
+}
+
 async function initializeFirestoreData(){
   setCloudStatus("connecting","Connecting Firestore");
   try{
@@ -184,6 +206,7 @@ async function initializeFirestoreData(){
       saveLocalCache();
     }
 
+    migrateRentalExpenseRecords();
     cloudReady=true;
 
     if(!crew.length && !projects.length){
@@ -204,6 +227,7 @@ async function initializeFirestoreData(){
     cloudReady=false;
     setCloudStatus("offline","Using Local Cache");
     if(!crew.length && !projects.length) seedDemo();
+    migrateRentalExpenseRecords();
     renderDashboard();
     renderProjects();
     renderCrew();
@@ -1142,6 +1166,22 @@ function rentalReceiptNo(){
   const dd=String(d.getDate()).padStart(2,"0");
   return `FF-RNT-${yy}${mm}${dd}-${String(Date.now()).slice(-6)}`;
 }
+function rentalProjectName(item){
+  if(!item.projectId) return "General / No Project";
+  const p=projects.find(x=>x.id===item.projectId);
+  return p?.name || item.projectName || "Project";
+}
+function renderRentalProjectOptions(){
+  const select=document.getElementById("rentalProjectId");
+  if(!select) return;
+  const current=select.value;
+  select.innerHTML=`<option value="">General / No Project</option>`+
+    [...projects]
+      .sort((a,b)=>(a.name||"").localeCompare(b.name||""))
+      .map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`)
+      .join("");
+  if([...select.options].some(o=>o.value===current)) select.value=current;
+}
 function renderRentalLiveSummary(){
   const wrap=document.getElementById("rentalLiveSummary");
   if(!wrap) return;
@@ -1149,33 +1189,35 @@ function renderRentalLiveSummary(){
   const paid=Number(document.getElementById("rentalPaidAmount")?.value||0);
   const balance=Math.max(0,total-paid);
   wrap.innerHTML=`
-    <div><span>Total Rental</span><strong>${money(total)}</strong></div>
-    <div><span>Received</span><strong class="paid-value">${money(paid)}</strong></div>
-    <div><span>Balance</span><strong class="${balance>0?"balance-value":"paid-value"}">${money(balance)}</strong></div>`;
+    <div><span>Total Rental Cost</span><strong>${money(total)}</strong></div>
+    <div><span>Paid by FrameFusion</span><strong class="balance-value">${money(paid)}</strong></div>
+    <div><span>Still Payable</span><strong class="${balance>0?"balance-value":"paid-value"}">${money(balance)}</strong></div>`;
 }
 function rentalEmailParams(item){
   return {
-    to_email:item.customerEmail,
+    to_email:item.supplierEmail,
     receipt_no:item.receiptNo,
     status:item.status,
     payment_date:item.paymentDate,
-    project_name:`Rental - ${item.itemName}`,
-    person_name:item.customerName,
-    payment_type:"Rental Payment",
+    project_name:`${rentalProjectName(item)} - ${item.itemName}`,
+    person_name:item.supplierName,
+    payment_type:"Rental Expense Payment",
     payment_method:item.paymentMethod,
     amount:Number(item.paidAmount||0).toLocaleString("en-LK"),
     total_paid:Number(item.paidAmount||0).toLocaleString("en-LK"),
     balance:rentalBalance(item).toLocaleString("en-LK"),
     note:[
+      `Paid by FrameFusion Studio`,
       item.note||"",
+      `Rented item/service: ${item.itemName}`,
       `Qty: ${Number(item.quantity||1)}`,
-      item.startDate||item.endDate ? `Rental: ${item.startDate||"—"} to ${item.endDate||"—"}` : "",
-      Number(item.depositAmount||0)>0 ? `Deposit/Security: ${money(item.depositAmount)}` : ""
+      item.startDate||item.endDate ? `Rental period: ${item.startDate||"—"} to ${item.endDate||"—"}` : "",
+      Number(item.depositAmount||0)>0 ? `Refundable security deposit recorded separately: ${money(item.depositAmount)}` : ""
     ].filter(Boolean).join(" | ")
   };
 }
 async function sendRentalReceiptEmail(item){
-  if(!isEmail(item.customerEmail)) return {ok:false,error:"Valid customer email is required."};
+  if(!isEmail(item.supplierEmail)) return {ok:false,error:"Valid supplier email is required."};
   try{
     const response=await fetch("https://api.emailjs.com/api/v1.0/email/send",{
       method:"POST",
@@ -1207,9 +1249,11 @@ async function sendRentalReceiptEmail(item){
   }
 }
 async function saveRentalPayment(){
-  const customerName=document.getElementById("rentalCustomerName").value.trim();
-  const customerEmail=normalizedEmail(document.getElementById("rentalCustomerEmail").value);
-  const customerPhone=document.getElementById("rentalCustomerPhone").value.trim();
+  const projectId=document.getElementById("rentalProjectId")?.value||"";
+  const projectName=projectId?(projects.find(x=>x.id===projectId)?.name||""):"";
+  const supplierName=document.getElementById("rentalSupplierName").value.trim();
+  const supplierEmail=normalizedEmail(document.getElementById("rentalSupplierEmail").value);
+  const supplierPhone=document.getElementById("rentalSupplierPhone").value.trim();
   const itemName=document.getElementById("rentalItemName").value.trim();
   const quantity=Math.max(1,Number(document.getElementById("rentalQuantity").value||1));
   const totalAmount=Number(document.getElementById("rentalTotalAmount").value||0);
@@ -1221,17 +1265,23 @@ async function saveRentalPayment(){
   const depositAmount=Number(document.getElementById("rentalDepositAmount").value||0);
   const note=document.getElementById("rentalNote").value.trim();
 
-  if(!customerName){toast("Enter customer name");return;}
-  if(!isEmail(customerEmail)){toast("Enter a valid customer email");return;}
-  if(!itemName){toast("Enter rental item / package");return;}
-  if(totalAmount<=0){toast("Enter total rental amount");return;}
-  if(paidAmount<=0){toast("Enter amount received");return;}
+  if(!supplierName){toast("Enter rental supplier / owner name");return;}
+  if(!isEmail(supplierEmail)){toast("Enter a valid supplier email");return;}
+  if(!itemName){toast("Enter rented equipment / service");return;}
+  if(totalAmount<=0){toast("Enter total rental cost");return;}
+  if(paidAmount<=0){toast("Enter amount paid");return;}
+  if(paidAmount>totalAmount){
+    toast("Amount paid cannot be greater than total rental cost");
+    return;
+  }
 
   const item={
     id:uid("rental"),
     receiptNo:rentalReceiptNo(),
-    customerName,customerEmail,customerPhone,itemName,quantity,
-    totalAmount,paidAmount,paymentDate,startDate,endDate,paymentMethod,depositAmount,note,
+    projectId,projectName,
+    supplierName,supplierEmail,supplierPhone,
+    itemName,quantity,totalAmount,paidAmount,
+    paymentDate,startDate,endDate,paymentMethod,depositAmount,note,
     status:rentalStatus(totalAmount,paidAmount),
     emailSent:false,emailSentAt:0,emailError:"",
     createdAt:Date.now(),updatedAt:Date.now()
@@ -1247,7 +1297,7 @@ async function saveRentalPayment(){
 
   const result=await sendRentalReceiptEmail(item);
   renderRentals();
-  toast(result.ok ? `Rental saved. Receipt ${item.receiptNo} emailed.` : `Rental saved. ${result.error}`);
+  toast(result.ok ? `Rental expense saved. Receipt ${item.receiptNo} emailed.` : `Rental expense saved. ${result.error}`);
 }
 async function resendRentalReceipt(id){
   const item=rentals.find(x=>x.id===id);
@@ -1259,29 +1309,38 @@ async function resendRentalReceipt(id){
 function deleteRental(id){
   const item=rentals.find(x=>x.id===id);
   if(!item) return;
-  if(!confirm(`Delete rental receipt ${item.receiptNo}?`)) return;
+  if(!confirm(`Delete rental expense receipt ${item.receiptNo}?`)) return;
   rentals=rentals.filter(x=>x.id!==id);
   save();
   renderRentals();
   renderFinancial();
-  toast("Rental deleted");
+  toast("Rental expense deleted");
 }
 function renderRentalHistory(){
   const wrap=document.getElementById("rentalHistory");
   if(!wrap) return;
   const q=(document.getElementById("rentalSearch")?.value||"").trim().toLowerCase();
-  const list=rentals.filter(r=>[r.receiptNo,r.customerName,r.customerEmail,r.customerPhone,r.itemName,r.status].join(" ").toLowerCase().includes(q));
+  const list=rentals.filter(r=>[
+    r.receiptNo,r.supplierName,r.supplierEmail,r.supplierPhone,
+    r.itemName,r.status,r.projectName,rentalProjectName(r)
+  ].join(" ").toLowerCase().includes(q));
+
   if(!list.length){
-    wrap.innerHTML=emptyState("package-open","No rental payments found",q?"Try another search.":"Save your first rental payment.");
+    wrap.innerHTML=emptyState("package-open","No rental expenses found",q?"Try another search.":"Record the first rental payment made by FrameFusion.");
     lucide.createIcons();
     return;
   }
+
   wrap.innerHTML=`<table class="data-table">
-    <thead><tr><th>Receipt</th><th>Customer</th><th>Rental</th><th>Received</th><th>Balance</th><th>Status</th><th>Email</th><th style="text-align:right">Actions</th></tr></thead>
+    <thead><tr>
+      <th>Receipt</th><th>Supplier / Owner</th><th>Project</th><th>Rented Item</th>
+      <th>Paid</th><th>Still Payable</th><th>Status</th><th>Email</th><th style="text-align:right">Actions</th>
+    </tr></thead>
     <tbody>${list.map(r=>`
       <tr>
         <td><b class="text-ffnavy">${escapeHtml(r.receiptNo)}</b><div class="text-xs text-slate-400">${escapeHtml(r.paymentDate||"")}</div></td>
-        <td><div class="font-bold">${escapeHtml(r.customerName)}</div><div class="text-xs text-slate-400">${escapeHtml(r.customerEmail||"")}</div></td>
+        <td><div class="font-bold">${escapeHtml(r.supplierName||"")}</div><div class="text-xs text-slate-400">${escapeHtml(r.supplierEmail||"")}</div></td>
+        <td>${escapeHtml(rentalProjectName(r))}</td>
         <td><div>${escapeHtml(r.itemName)}</div><div class="text-xs text-slate-400">Qty ${Number(r.quantity||1)}${r.startDate||r.endDate?` • ${escapeHtml(r.startDate||"—")} → ${escapeHtml(r.endDate||"—")}`:""}</div></td>
         <td><b>${money(r.paidAmount)}</b></td>
         <td><b>${money(rentalBalance(r))}</b></td>
@@ -1297,17 +1356,25 @@ function renderRentalHistory(){
 }
 function renderRentals(){
   if(!document.getElementById("view-rentals")) return;
+  renderRentalProjectOptions();
   const date=document.getElementById("rentalPaymentDate");
   if(date && !date.value) date.value=todayInputValue();
   renderRentalLiveSummary();
   renderRentalHistory();
+}
+function rentalPaidForProject(projectId){
+  return rentals
+    .filter(r=>r.projectId===projectId)
+    .reduce((sum,r)=>sum+Number(r.paidAmount||0),0);
 }
 function financialProjectRows(){
   return projects.map(p=>{
     const equipment=equipmentTotalForProject(p);
     const crewPaid=(p.crew||[]).reduce((sum,m)=>sum+crewPaymentsTotal(m),0);
     const revenueReceived=eventPaymentsTotal(p);
-    return {p,equipment,crewPaid,revenueReceived,profit:revenueReceived-equipment-crewPaid};
+    const rentalPaid=rentalPaidForProject(p.id);
+    const profit=revenueReceived-equipment-crewPaid-rentalPaid;
+    return {p,equipment,crewPaid,revenueReceived,rentalPaid,profit};
   });
 }
 function financialCrewTotals(){
@@ -1331,16 +1398,17 @@ function financialCrewTotals(){
 function renderFinancial(){
   const stats=document.getElementById("financialStats");
   if(!stats) return;
+
   const rows=financialProjectRows();
   const projectIncome=rows.reduce((s,x)=>s+x.revenueReceived,0);
   const equipment=rows.reduce((s,x)=>s+x.equipment,0);
   const crewPaid=rows.reduce((s,x)=>s+x.crewPaid,0);
-  const rentalIncome=rentals.reduce((s,r)=>s+Number(r.paidAmount||0),0);
-  const net=projectIncome+rentalIncome-equipment-crewPaid;
+  const rentalExpenses=rentals.reduce((s,r)=>s+Number(r.paidAmount||0),0);
+  const net=projectIncome-equipment-crewPaid-rentalExpenses;
 
   const data=[
     ["wallet",money(projectIncome),"Project Income"],
-    ["package-open",money(rentalIncome),"Rental Income"],
+    ["package-open",money(rentalExpenses),"Rental Expenses"],
     ["wrench",money(equipment),"Equipment Costs"],
     ["users",money(crewPaid),"Crew Paid"],
     ["badge-dollar-sign",money(net),net>=0?"Net Profit":"Net Loss"]
@@ -1354,27 +1422,31 @@ function renderFinancial(){
 
   const projectsWrap=document.getElementById("financialProjectsTable");
   projectsWrap.innerHTML=rows.length?`<table class="data-table">
-    <thead><tr><th>Project</th><th>Income Received</th><th>Equipment</th><th>Crew Paid</th><th>Profit / Loss</th></tr></thead>
+    <thead><tr>
+      <th>Project</th><th>Income Received</th><th>Equipment</th><th>Crew Paid</th><th>Rental Paid</th><th>Profit / Loss</th>
+    </tr></thead>
     <tbody>${rows.map(x=>`
       <tr>
         <td><b class="text-ffnavy">${escapeHtml(x.p.name)}</b></td>
         <td>${money(x.revenueReceived)}</td>
         <td>${money(x.equipment)}</td>
         <td>${money(x.crewPaid)}</td>
+        <td>${money(x.rentalPaid)}</td>
         <td><b class="${x.profit>=0?"financial-positive":"financial-negative"}">${money(x.profit)}</b></td>
       </tr>`).join("")}</tbody>
   </table>`:emptyState("folder-kanban","No project financials","Create projects and record payments first.");
 
   const rentalWrap=document.getElementById("financialRentalSummary");
-  const totalRentalValue=rentals.reduce((s,r)=>s+Number(r.totalAmount||0),0);
-  const outstanding=Math.max(0,totalRentalValue-rentalIncome);
+  const totalRentalCost=rentals.reduce((s,r)=>s+Number(r.totalAmount||0),0);
+  const amountPaid=rentals.reduce((s,r)=>s+Number(r.paidAmount||0),0);
+  const stillPayable=Math.max(0,totalRentalCost-amountPaid);
   const deposits=rentals.reduce((s,r)=>s+Number(r.depositAmount||0),0);
   rentalWrap.innerHTML=`<div class="financial-rental-card">
-    <div class="financial-rental-line"><span>Rental Records</span><strong>${rentals.length}</strong></div>
-    <div class="financial-rental-line"><span>Total Rental Value</span><strong>${money(totalRentalValue)}</strong></div>
-    <div class="financial-rental-line"><span>Income Received</span><strong class="financial-positive">${money(rentalIncome)}</strong></div>
-    <div class="financial-rental-line"><span>Outstanding</span><strong class="${outstanding>0?"financial-negative":"financial-positive"}">${money(outstanding)}</strong></div>
-    <div class="financial-rental-line"><span>Deposits / Security</span><strong>${money(deposits)}</strong></div>
+    <div class="financial-rental-line"><span>Rental Expense Records</span><strong>${rentals.length}</strong></div>
+    <div class="financial-rental-line"><span>Total Rental Cost</span><strong>${money(totalRentalCost)}</strong></div>
+    <div class="financial-rental-line"><span>Paid to Suppliers</span><strong class="financial-negative">${money(amountPaid)}</strong></div>
+    <div class="financial-rental-line"><span>Still Payable</span><strong class="${stillPayable>0?"financial-negative":"financial-positive"}">${money(stillPayable)}</strong></div>
+    <div class="financial-rental-line"><span>Refundable Security Deposits</span><strong>${money(deposits)}</strong></div>
   </div>`;
 
   const crewWrap=document.getElementById("financialCrewTable");
@@ -1391,7 +1463,6 @@ function renderFinancial(){
   </table>`:emptyState("users","No crew payments yet","Crew payment totals will appear after payments are recorded.");
   lucide.createIcons();
 }
-
 
 function projectSignatures(p){
   const s=p?.signatures||{};

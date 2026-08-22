@@ -144,7 +144,7 @@
                 </button>
                 <button class="quick-card" data-action="rentals">
                   <span class="quick-icon"><i data-lucide="package-open"></i></span>
-                  <span><b>Rental Payments</b><small>Rental income and email receipts</small></span>
+                  <span><b>Rental Payments</b><small>Rental expenses and supplier receipts</small></span>
                   <i data-lucide="chevron-right"></i>
                 </button>
                 <button class="quick-card" data-action="financial">
@@ -327,52 +327,69 @@
             <div class="panel">
               <div class="panel-head">
                 <div>
-                  <h3>New Rental Payment</h3>
-                  <p>Record rental income and send an EmailJS receipt instantly.</p>
+                  <h3>New Rental Expense Payment</h3>
+                  <p>Record equipment/services rented by FrameFusion from an outside supplier and email the supplier a payment receipt.</p>
                 </div>
               </div>
 
               <div class="grid md:grid-cols-2 gap-4 mt-5">
                 <label class="field md:col-span-2">
-                  <span>Customer / Renter Name *</span>
-                  <input id="rentalCustomerName" placeholder="Customer name" />
+                  <span>Related Project / Event</span>
+                  <select id="rentalProjectId">
+                    <option value="">General / No Project</option>
+                  </select>
                 </label>
-                <label class="field">
-                  <span>Customer Email *</span>
-                  <input id="rentalCustomerEmail" type="email" placeholder="customer@example.com" />
-                </label>
-                <label class="field">
-                  <span>Customer Phone</span>
-                  <input id="rentalCustomerPhone" placeholder="07X XXX XXXX" />
-                </label>
+
                 <label class="field md:col-span-2">
-                  <span>Rental Item / Package *</span>
-                  <input id="rentalItemName" placeholder="e.g. Synco XTalk X5 Intercom Set" />
+                  <span>Rental Supplier / Owner Name *</span>
+                  <input id="rentalSupplierName" placeholder="Supplier / owner / rental company" />
                 </label>
+
+                <label class="field">
+                  <span>Supplier Email *</span>
+                  <input id="rentalSupplierEmail" type="email" placeholder="supplier@example.com" />
+                </label>
+
+                <label class="field">
+                  <span>Supplier Phone</span>
+                  <input id="rentalSupplierPhone" placeholder="07X XXX XXXX" />
+                </label>
+
+                <label class="field md:col-span-2">
+                  <span>Rented Equipment / Service *</span>
+                  <input id="rentalItemName" placeholder="e.g. Camera, Intercom Set, Lighting, Transport" />
+                </label>
+
                 <label class="field">
                   <span>Quantity</span>
                   <input id="rentalQuantity" type="number" min="1" step="1" inputmode="numeric" value="1" />
                 </label>
+
                 <label class="field">
-                  <span>Total Rental Amount (LKR) *</span>
+                  <span>Total Rental Cost (LKR) *</span>
                   <input id="rentalTotalAmount" type="number" min="1" step="1" inputmode="numeric" placeholder="6000" />
                 </label>
+
                 <label class="field">
-                  <span>Amount Received (LKR) *</span>
+                  <span>Amount Paid Now (LKR) *</span>
                   <input id="rentalPaidAmount" type="number" min="1" step="1" inputmode="numeric" placeholder="6000" />
                 </label>
+
                 <label class="field">
                   <span>Payment Date *</span>
                   <input id="rentalPaymentDate" type="date" />
                 </label>
+
                 <label class="field">
                   <span>Rental Start Date</span>
                   <input id="rentalStartDate" type="date" />
                 </label>
+
                 <label class="field">
                   <span>Rental End Date</span>
                   <input id="rentalEndDate" type="date" />
                 </label>
+
                 <label class="field">
                   <span>Payment Method</span>
                   <select id="rentalPaymentMethod">
@@ -383,32 +400,38 @@
                     <option>Other</option>
                   </select>
                 </label>
+
                 <label class="field">
-                  <span>Deposit / Security Amount</span>
+                  <span>Refundable Security Deposit</span>
                   <input id="rentalDepositAmount" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
                 </label>
+
                 <label class="field md:col-span-2">
                   <span>Note / Reference</span>
-                  <input id="rentalNote" placeholder="Rental reference, equipment details, etc." />
+                  <input id="rentalNote" placeholder="Invoice no, rental reference, equipment details, etc." />
                 </label>
               </div>
 
               <div id="rentalLiveSummary" class="payment-summary mt-5"></div>
 
+              <div class="text-xs text-slate-400 mt-3">
+                Refundable security deposits are recorded separately and are not counted as a profit/loss expense.
+              </div>
+
               <button id="saveRentalPaymentBtn" type="button" class="btn btn-primary w-full mt-5">
-                <i data-lucide="mail-plus"></i>Save Rental & Email Receipt
+                <i data-lucide="mail-plus"></i>Save Rental Expense & Email Receipt
               </button>
             </div>
 
             <div class="panel">
               <div class="panel-head flex-col md:flex-row md:items-center gap-4">
                 <div>
-                  <h3>Rental Payment History</h3>
-                  <p>All rental receipts stored in Firestore.</p>
+                  <h3>Rental Expense History</h3>
+                  <p>Payments FrameFusion has made to equipment/service rental suppliers.</p>
                 </div>
                 <div class="search-box md:ml-auto w-full md:w-auto">
                   <i data-lucide="search"></i>
-                  <input id="rentalSearch" type="search" placeholder="Search rentals..." />
+                  <input id="rentalSearch" type="search" placeholder="Search supplier, project, item..." />
                 </div>
               </div>
               <div id="rentalHistory" class="table-wrap mt-5"></div>
@@ -425,7 +448,7 @@
               <div class="panel-head">
                 <div>
                   <h3>Project Profit / Loss</h3>
-                  <p>Actual received project income minus equipment costs and actual crew payments.</p>
+                  <p>Actual received project income minus equipment costs, crew payments and rental expenses.</p>
                 </div>
               </div>
               <div id="financialProjectsTable" class="table-wrap mt-5"></div>
@@ -434,8 +457,8 @@
             <div class="panel">
               <div class="panel-head">
                 <div>
-                  <h3>Rental Income</h3>
-                  <p>Rental value, amount received and outstanding balances.</p>
+                  <h3>Rental Expenses</h3>
+                  <p>Amounts paid and still payable to outside rental suppliers.</p>
                 </div>
               </div>
               <div id="financialRentalSummary" class="mt-5"></div>
