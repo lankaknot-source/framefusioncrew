@@ -204,13 +204,10 @@
                   <input id="receiptCompanyName" placeholder="FrameFusion Studio" />
                 </label>
                 <label class="field">
-                  <span>Sender Email</span>
-                  <input id="receiptSenderEmail" type="email" placeholder="management.framefusion@gmail.com" />
+                  <span>Sender / Reply-To Email</span>
+                  <input id="receiptSenderEmail" type="email" value="management.framefusion@gmail.com" readonly />
                 </label>
-                <label class="field">
-                  <span>Reply-To Email</span>
-                  <input id="receiptReplyToEmail" type="email" placeholder="management.framefusion@gmail.com" />
-                </label>
+                <input id="receiptReplyToEmail" type="hidden" value="management.framefusion@gmail.com" />
                 <label class="field">
                   <span>Receipt Footer</span>
                   <textarea id="receiptFooterText" rows="3" placeholder="Thank you."></textarea>
@@ -224,7 +221,7 @@
                 <i data-lucide="mail-check"></i>
                 <div>
                   <b>Email delivery</b>
-                  <p>This app writes receipt emails to the Firestore <code>mail</code> collection. Firebase Trigger Email must be installed and connected to your SMTP account.</p>
+                  <p>Receipt emails are sent directly using <b>EmailJS Free</b>. No Firebase Blaze plan or Trigger Email extension is required.</p>
                 </div>
               </div>
             </div>

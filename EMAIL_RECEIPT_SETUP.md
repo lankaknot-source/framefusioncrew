@@ -1,44 +1,48 @@
-# FrameFusion Crew v7 — Email Receipt Setup
+# FrameFusion Crew v8 — Free EmailJS Receipt Setup
 
-The app is ready to create receipt emails in the Firestore collection:
+The app is already configured for the EmailJS account values supplied:
 
-`mail`
+- Service ID: `service_h7agh7l`
+- Template ID: `template_opov7qi`
+- Public Key: `g4vHiDjwBll1fqO99`
+- Sender / Reply-To: `management.framefusion@gmail.com`
 
-To actually send those emails, install Firebase's official **Trigger Email** extension (`firestore-send-email`) in the `ffcrew` Firebase project and configure it with your SMTP account.
+No Firebase Blaze plan and no Firebase Trigger Email extension are required.
 
-## Firebase Console setup
+## EmailJS template variables expected
 
-1. Open Firebase Console → project `ffcrew`.
-2. Open **Extensions**.
-3. Install **Trigger Email**.
-4. Set the email documents collection to:
-   `mail`
-5. Configure the SMTP connection for the email account/domain that should send FrameFusion receipts.
-6. Set **Default FROM address** to `management.framefusion@gmail.com`.
-7. After installation, open FrameFusion Crew → **Payments** → **Receipt Email Settings** and enter the same sender email / reply-to email.
+The template must use these exact variables:
 
-The app writes documents with:
-- `to`
-- `from` (when configured in the app)
-- `replyTo`
-- `message.subject`
-- `message.text`
-- `message.html`
+- `{{to_email}}`
+- `{{receipt_no}}`
+- `{{status}}`
+- `{{payment_date}}`
+- `{{project_name}}`
+- `{{person_name}}`
+- `{{payment_type}}`
+- `{{payment_method}}`
+- `{{amount}}`
+- `{{total_paid}}`
+- `{{balance}}`
+- `{{note}}`
 
-The Firebase extension watches the `mail` collection and sends the message.
+## How sending works
 
-## Important security note
+When a crew or event payment is saved, the browser sends the receipt directly to EmailJS using its public browser API.
 
-The FrameFusion web app currently does not have a login/authentication layer. A public GitHub Pages app should NOT leave unrestricted write access to a mail collection in production, because it could be abused to send unwanted email.
+Firestore continues to save:
+- projects
+- crew
+- receipts
+- settings
+- saved signatures
 
-For production, add Firebase Authentication and restrict Firestore writes to authorized users.
+The old Firestore `mail` queue is no longer used by v8.
 
+## EmailJS free-plan note
 
-## FrameFusion configured sender
+The EmailJS dashboard currently shows the account request allowance. Each sent/resend receipt uses one EmailJS request.
 
-Use:
+## Security
 
-- Sender email: `management.framefusion@gmail.com`
-- Reply-to email: `management.framefusion@gmail.com`
-
-If you use Gmail SMTP with Firebase Trigger Email, configure the SMTP account for this mailbox on the Firebase side. Do not place the Gmail password or App Password inside `app.js`.
+The EmailJS Public Key is designed to be used in browser-side code. Do not place EmailJS private keys, Gmail passwords, or Google App Passwords in this project.

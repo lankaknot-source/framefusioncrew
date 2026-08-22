@@ -21,10 +21,7 @@ service cloud.firestore {
     match /framefusion_settings/{document=**} {
       allow read, write: if signedIn();
     }
-    match /mail/{documentId} {
-      allow create: if signedIn();
-      allow read, update, delete: if false;
-    }
+
     match /{document=**} {
       allow read, write: if false;
     }

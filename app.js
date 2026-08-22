@@ -20,6 +20,12 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
 
+const EMAILJS_CONFIG = {
+  serviceId: "service_h7agh7l",
+  templateId: "template_opov7qi",
+  publicKey: "g4vHiDjwBll1fqO99"
+};
+
 
 const STORAGE_KEYS = {
   crew: "framefusion_crew_v1",
@@ -34,8 +40,7 @@ const CLOUD_COLLECTIONS = {
   projects: "framefusion_projects",
   signatures: "framefusion_signatures",
   receipts: "framefusion_receipts",
-  settings: "framefusion_settings",
-  mail: "mail"
+  settings: "framefusion_settings"
 };
 
 let crew = load(STORAGE_KEYS.crew, []);
@@ -716,39 +721,53 @@ async function queueReceiptEmail(receipt){
   if(!receipt?.email || !isEmail(receipt.email)){
     return {ok:false,error:"Valid recipient email is required."};
   }
-  if(!cloudReady){
-    return {ok:false,error:"Firestore is offline. Receipt saved, but email was not queued."};
-  }
-  const mailId=uid("mail");
-  const senderEmail=String(appSettings.senderEmail||"").trim();
-  const replyTo=String(appSettings.replyToEmail||senderEmail||"").trim();
-  const payload={
-    to:[receipt.email],
-    receiptId:receipt.id,
-    receiptNo:receipt.receiptNo,
-    receiptType:receipt.type,
-    createdAt:Date.now(),
-    message:{
-      subject:`${appSettings.companyName||"FrameFusion Studio"} Receipt ${receipt.receiptNo} - ${receipt.status}`,
-      text:buildReceiptEmailText(receipt),
-      html:buildReceiptEmailHtml(receipt)
-    }
+
+  const params={
+    to_email: receipt.email,
+    receipt_no: receipt.receiptNo || "",
+    status: receipt.status || "PAID",
+    payment_date: receipt.date || todayInputValue(),
+    project_name: receipt.projectName || "",
+    person_name: receipt.partyName || "",
+    payment_type: receipt.type==="crew" ? "Crew Payment" : "Event / Client Payment",
+    payment_method: receipt.method || "",
+    amount: Number(receipt.amount||0).toLocaleString("en-LK"),
+    total_paid: Number(receipt.totalPaid||0).toLocaleString("en-LK"),
+    balance: Math.max(0,Number(receipt.balance||0)).toLocaleString("en-LK"),
+    note: receipt.note || "—"
   };
-  if(senderEmail) payload.from=`${appSettings.companyName||"FrameFusion Studio"} <${senderEmail}>`;
-  if(replyTo) payload.replyTo=replyTo;
 
   try{
-    await setDoc(doc(db,CLOUD_COLLECTIONS.mail,mailId),payload);
-    receipt.emailQueued=true;
-    receipt.mailId=mailId;
-    receipt.emailQueuedAt=Date.now();
+    const response=await fetch("https://api.emailjs.com/api/v1.0/email/send",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        service_id:EMAILJS_CONFIG.serviceId,
+        template_id:EMAILJS_CONFIG.templateId,
+        user_id:EMAILJS_CONFIG.publicKey,
+        template_params:params
+      })
+    });
+
+    if(!response.ok){
+      const message=(await response.text()).trim() || `EmailJS error ${response.status}`;
+      throw new Error(message);
+    }
+
+    receipt.emailSent=true;
+    receipt.emailSentAt=Date.now();
+    receipt.emailProvider="EmailJS";
     receipt.emailError="";
-    save();
-    return {ok:true,mailId};
-  }catch(error){
-    console.error("Receipt email queue failed:",error);
     receipt.emailQueued=false;
-    receipt.emailError=error?.message||"Email queue failed";
+    receipt.mailId="";
+    save();
+
+    return {ok:true};
+  }catch(error){
+    console.error("EmailJS receipt send failed:",error);
+    receipt.emailSent=false;
+    receipt.emailProvider="EmailJS";
+    receipt.emailError=error?.message||"Email send failed";
     save();
     return {ok:false,error:receipt.emailError};
   }
@@ -770,6 +789,9 @@ function receiptRecord(data){
     totalDue:Number(data.totalDue||0),
     totalPaid:Number(data.totalPaid||0),
     balance:Number(data.balance||0),
+    emailSent:false,
+    emailSentAt:0,
+    emailProvider:"EmailJS",
     emailQueued:false,
     mailId:"",
     emailError:"",
@@ -799,8 +821,8 @@ function fillProjectSelect(selectId){
 function loadReceiptSettingsForm(){
   const set=(id,value)=>{const el=document.getElementById(id);if(el)el.value=value||""};
   set("receiptCompanyName",appSettings.companyName||"FrameFusion Studio");
-  set("receiptSenderEmail",appSettings.senderEmail||"");
-  set("receiptReplyToEmail",appSettings.replyToEmail||"");
+  set("receiptSenderEmail","management.framefusion@gmail.com");
+  set("receiptReplyToEmail","management.framefusion@gmail.com");
   set("receiptFooterText",appSettings.footerText||"");
 }
 function saveReceiptSettings(){
@@ -808,8 +830,8 @@ function saveReceiptSettings(){
     ...appSettings,
     id:"company",
     companyName:document.getElementById("receiptCompanyName").value.trim()||"FrameFusion Studio",
-    senderEmail:normalizedEmail(document.getElementById("receiptSenderEmail").value)||"management.framefusion@gmail.com",
-    replyToEmail:normalizedEmail(document.getElementById("receiptReplyToEmail").value)||"management.framefusion@gmail.com",
+    senderEmail:"management.framefusion@gmail.com",
+    replyToEmail:"management.framefusion@gmail.com",
     footerText:document.getElementById("receiptFooterText").value.trim()||"Thank you."
   };
   save();
@@ -915,7 +937,7 @@ async function saveEventPayment(){
   renderPayments();
   const result=await queueReceiptEmail(receipt);
   renderReceiptHistory();
-  toast(result.ok ? `Payment saved. Receipt ${receipt.receiptNo} queued.` : `Payment saved. ${result.error}`);
+  toast(result.ok ? `Payment saved. Receipt ${receipt.receiptNo} emailed.` : `Payment saved. ${result.error}`);
 }
 function renderCrewPayments(){
   const select=document.getElementById("crewPaymentProject");
@@ -1041,7 +1063,7 @@ async function saveCrewPayment(){
   renderCrew();
   const result=await queueReceiptEmail(receipt);
   renderReceiptHistory();
-  toast(result.ok ? `${m.name} payment saved as ${status}. Receipt queued.` : `Payment saved. ${result.error}`);
+  toast(result.ok ? `${m.name} payment saved as ${status}. Receipt emailed.` : `Payment saved. ${result.error}`);
 }
 function renderReceiptHistory(){
   const wrap=document.getElementById("receiptHistory");
@@ -1061,7 +1083,7 @@ function renderReceiptHistory(){
         <td><div class="font-bold">${escapeHtml(r.projectName||"")}</div><div class="text-xs text-slate-400">${escapeHtml(r.partyName||"")}</div></td>
         <td><b>${money(r.amount)}</b></td>
         <td>${statusPill(r.status)}</td>
-        <td><div>${escapeHtml(r.email||"—")}</div><div class="receipt-email-state ${r.emailQueued?"receipt-email-ok":"receipt-email-warn"}">${r.emailQueued?"Queued / Sent by Firebase":"Not queued"}</div></td>
+        <td><div>${escapeHtml(r.email||"—")}</div><div class="receipt-email-state ${r.emailSent?"receipt-email-ok":"receipt-email-warn"}">${r.emailSent?"Sent by EmailJS":(r.emailError?"Email failed":"Not sent")}</div></td>
         <td><div class="flex justify-end">
           <button class="btn btn-light" onclick="resendReceipt('${r.id}')"><i data-lucide="send"></i>Resend</button>
         </div></td>
@@ -1074,7 +1096,7 @@ async function resendReceipt(receiptId){
   if(!r) return;
   const result=await queueReceiptEmail(r);
   renderReceiptHistory();
-  toast(result.ok ? `Receipt ${r.receiptNo} queued again` : result.error);
+  toast(result.ok ? `Receipt ${r.receiptNo} emailed again` : result.error);
 }
 function renderPayments(){
   if(!document.getElementById("view-payments")) return;

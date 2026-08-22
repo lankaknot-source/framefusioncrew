@@ -166,3 +166,18 @@ Default receipt sender and reply-to email is now:
 `management.framefusion@gmail.com`
 
 Use the same mailbox when configuring Firebase Trigger Email / SMTP.
+
+
+## v8 — Free EmailJS Direct Receipt Sending
+
+- Removed dependency on Firebase Trigger Email / Blaze billing.
+- Payment receipts now send directly through EmailJS.
+- Configured:
+  - Service ID: `service_h7agh7l`
+  - Template ID: `template_opov7qi`
+  - Public Key: `g4vHiDjwBll1fqO99`
+  - Sender / Reply-To: `management.framefusion@gmail.com`
+- Receipt History now shows **Sent by EmailJS** or **Email failed**.
+- Resend uses EmailJS directly.
+- Firestore remains the cloud database for projects, crew, signatures, payments, receipts and settings.
+- The Firestore `mail` queue is no longer required.
