@@ -181,3 +181,18 @@ Use the same mailbox when configuring Firebase Trigger Email / SMTP.
 - Resend uses EmailJS directly.
 - Firestore remains the cloud database for projects, crew, signatures, payments, receipts and settings.
 - The Firestore `mail` queue is no longer required.
+
+
+## v9 — Rental Payments + Financial Dashboard
+
+- New **Rental Payments** section in the main navigation.
+- Rental receipt details: customer/renter, email, phone, rental item/package, quantity, total amount, amount received, rental dates, payment date, method, deposit/security and reference.
+- Rental receipt emails use the existing free EmailJS connection.
+- Rental records are saved to Firestore collection `framefusion_rentals`.
+- Rental history supports search, receipt resend and delete.
+- New **Financial** section.
+- Financial cards show project income received, rental income, equipment costs, actual crew payments and combined net profit/loss.
+- Project-by-project profit/loss uses actual event payments received minus equipment costs minus actual crew payments.
+- Rental summary shows total rental value, received income, outstanding amount and deposits.
+- Crew Payment Totals shows actual cumulative payments to each crew member across all projects.
+- Backup/restore now includes rental records.

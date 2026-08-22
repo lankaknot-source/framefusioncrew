@@ -55,6 +55,12 @@
         <button class="nav-btn" data-view="payments">
           <i data-lucide="receipt-text"></i><span>Payments</span>
         </button>
+        <button class="nav-btn" data-view="rentals">
+          <i data-lucide="package-open"></i><span>Rental Payments</span>
+        </button>
+        <button class="nav-btn" data-view="financial">
+          <i data-lucide="chart-no-axes-combined"></i><span>Financial</span>
+        </button>
         <button class="nav-btn" data-view="backup">
           <i data-lucide="database-backup"></i><span>Backup & Restore</span>
         </button>
@@ -134,6 +140,16 @@
                 <button class="quick-card" data-action="payments">
                   <span class="quick-icon"><i data-lucide="receipt-text"></i></span>
                   <span><b>Payments & Receipts</b><small>Record payments and email receipts</small></span>
+                  <i data-lucide="chevron-right"></i>
+                </button>
+                <button class="quick-card" data-action="rentals">
+                  <span class="quick-icon"><i data-lucide="package-open"></i></span>
+                  <span><b>Rental Payments</b><small>Rental income and email receipts</small></span>
+                  <i data-lucide="chevron-right"></i>
+                </button>
+                <button class="quick-card" data-action="financial">
+                  <span class="quick-icon"><i data-lucide="chart-no-axes-combined"></i></span>
+                  <span><b>Financial Summary</b><small>Profit, loss and crew totals</small></span>
                   <i data-lucide="chevron-right"></i>
                 </button>
                 <button class="quick-card" data-action="backup">
@@ -304,12 +320,145 @@
           </div>
         </div>
 
+
+        <!-- Rental Payments -->
+        <div id="view-rentals" class="app-view hidden">
+          <div class="grid xl:grid-cols-[.95fr_1.05fr] gap-6">
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>New Rental Payment</h3>
+                  <p>Record rental income and send an EmailJS receipt instantly.</p>
+                </div>
+              </div>
+
+              <div class="grid md:grid-cols-2 gap-4 mt-5">
+                <label class="field md:col-span-2">
+                  <span>Customer / Renter Name *</span>
+                  <input id="rentalCustomerName" placeholder="Customer name" />
+                </label>
+                <label class="field">
+                  <span>Customer Email *</span>
+                  <input id="rentalCustomerEmail" type="email" placeholder="customer@example.com" />
+                </label>
+                <label class="field">
+                  <span>Customer Phone</span>
+                  <input id="rentalCustomerPhone" placeholder="07X XXX XXXX" />
+                </label>
+                <label class="field md:col-span-2">
+                  <span>Rental Item / Package *</span>
+                  <input id="rentalItemName" placeholder="e.g. Synco XTalk X5 Intercom Set" />
+                </label>
+                <label class="field">
+                  <span>Quantity</span>
+                  <input id="rentalQuantity" type="number" min="1" step="1" inputmode="numeric" value="1" />
+                </label>
+                <label class="field">
+                  <span>Total Rental Amount (LKR) *</span>
+                  <input id="rentalTotalAmount" type="number" min="1" step="1" inputmode="numeric" placeholder="6000" />
+                </label>
+                <label class="field">
+                  <span>Amount Received (LKR) *</span>
+                  <input id="rentalPaidAmount" type="number" min="1" step="1" inputmode="numeric" placeholder="6000" />
+                </label>
+                <label class="field">
+                  <span>Payment Date *</span>
+                  <input id="rentalPaymentDate" type="date" />
+                </label>
+                <label class="field">
+                  <span>Rental Start Date</span>
+                  <input id="rentalStartDate" type="date" />
+                </label>
+                <label class="field">
+                  <span>Rental End Date</span>
+                  <input id="rentalEndDate" type="date" />
+                </label>
+                <label class="field">
+                  <span>Payment Method</span>
+                  <select id="rentalPaymentMethod">
+                    <option>Bank Transfer</option>
+                    <option>Cash</option>
+                    <option>Cheque</option>
+                    <option>Card</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Deposit / Security Amount</span>
+                  <input id="rentalDepositAmount" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
+                </label>
+                <label class="field md:col-span-2">
+                  <span>Note / Reference</span>
+                  <input id="rentalNote" placeholder="Rental reference, equipment details, etc." />
+                </label>
+              </div>
+
+              <div id="rentalLiveSummary" class="payment-summary mt-5"></div>
+
+              <button id="saveRentalPaymentBtn" type="button" class="btn btn-primary w-full mt-5">
+                <i data-lucide="mail-plus"></i>Save Rental & Email Receipt
+              </button>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head flex-col md:flex-row md:items-center gap-4">
+                <div>
+                  <h3>Rental Payment History</h3>
+                  <p>All rental receipts stored in Firestore.</p>
+                </div>
+                <div class="search-box md:ml-auto w-full md:w-auto">
+                  <i data-lucide="search"></i>
+                  <input id="rentalSearch" type="search" placeholder="Search rentals..." />
+                </div>
+              </div>
+              <div id="rentalHistory" class="table-wrap mt-5"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Financial -->
+        <div id="view-financial" class="app-view hidden">
+          <div id="financialStats" class="grid sm:grid-cols-2 xl:grid-cols-5 gap-4"></div>
+
+          <div class="grid xl:grid-cols-[1.15fr_.85fr] gap-6 mt-6">
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Project Profit / Loss</h3>
+                  <p>Actual received project income minus equipment costs and actual crew payments.</p>
+                </div>
+              </div>
+              <div id="financialProjectsTable" class="table-wrap mt-5"></div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Rental Income</h3>
+                  <p>Rental value, amount received and outstanding balances.</p>
+                </div>
+              </div>
+              <div id="financialRentalSummary" class="mt-5"></div>
+            </div>
+          </div>
+
+          <div class="panel mt-6">
+            <div class="panel-head">
+              <div>
+                <h3>Crew Payment Totals</h3>
+                <p>Total amount actually paid to each crew member across every project.</p>
+              </div>
+            </div>
+            <div id="financialCrewTable" class="table-wrap mt-5"></div>
+          </div>
+        </div>
+
         <!-- Backup -->
         <div id="view-backup" class="app-view hidden">
           <div class="grid lg:grid-cols-2 gap-6">
             <div class="panel">
               <div class="panel-head">
-                <div><h3>Export Backup</h3><p>Download projects, crew, payments, receipts, settings and saved signatures as a JSON file.</p></div>
+                <div><h3>Export Backup</h3><p>Download projects, crew, rentals, payments, receipts, settings and saved signatures as a JSON file.</p></div>
               </div>
               <div class="backup-card">
                 <span class="backup-icon"><i data-lucide="download"></i></span>

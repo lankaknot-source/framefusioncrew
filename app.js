@@ -32,7 +32,8 @@ const STORAGE_KEYS = {
   projects: "framefusion_projects_v1",
   signatures: "framefusion_signatures_v1",
   receipts: "framefusion_receipts_v1",
-  settings: "framefusion_settings_v1"
+  settings: "framefusion_settings_v1",
+  rentals: "framefusion_rentals_v1"
 };
 
 const CLOUD_COLLECTIONS = {
@@ -40,13 +41,15 @@ const CLOUD_COLLECTIONS = {
   projects: "framefusion_projects",
   signatures: "framefusion_signatures",
   receipts: "framefusion_receipts",
-  settings: "framefusion_settings"
+  settings: "framefusion_settings",
+  rentals: "framefusion_rentals"
 };
 
 let crew = load(STORAGE_KEYS.crew, []);
 let projects = load(STORAGE_KEYS.projects, []);
 let signatureLibrary = load(STORAGE_KEYS.signatures, []);
 let receipts = load(STORAGE_KEYS.receipts, []);
+let rentals = load(STORAGE_KEYS.rentals, []);
 let appSettings = load(STORAGE_KEYS.settings, {
   id:"company",
   companyName:"FrameFusion Studio",
@@ -78,6 +81,7 @@ function saveLocalCache(){
   localStorage.setItem(STORAGE_KEYS.signatures, JSON.stringify(signatureLibrary));
   localStorage.setItem(STORAGE_KEYS.receipts, JSON.stringify(receipts));
   localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(appSettings));
+  localStorage.setItem(STORAGE_KEYS.rentals, JSON.stringify(rentals));
 }
 function save(){
   saveLocalCache();
@@ -132,7 +136,8 @@ async function syncAllToFirestore(){
       syncOneCollection(CLOUD_COLLECTIONS.projects,projects),
       syncOneCollection(CLOUD_COLLECTIONS.signatures,signatureLibrary),
       syncOneCollection(CLOUD_COLLECTIONS.receipts,receipts),
-      syncOneCollection(CLOUD_COLLECTIONS.settings,[{id:"company",...appSettings}])
+      syncOneCollection(CLOUD_COLLECTIONS.settings,[{id:"company",...appSettings}]),
+      syncOneCollection(CLOUD_COLLECTIONS.rentals,rentals)
     ]);
     setCloudStatus("online","Firestore Synced");
   }catch(error){
@@ -157,20 +162,22 @@ function scheduleCloudSync(){
 async function initializeFirestoreData(){
   setCloudStatus("connecting","Connecting Firestore");
   try{
-    const [cloudCrew,cloudProjects,cloudSignatures,cloudReceipts,cloudSettings]=await Promise.all([
+    const [cloudCrew,cloudProjects,cloudSignatures,cloudReceipts,cloudSettings,cloudRentals]=await Promise.all([
       readCloudCollection(CLOUD_COLLECTIONS.crew),
       readCloudCollection(CLOUD_COLLECTIONS.projects),
       readCloudCollection(CLOUD_COLLECTIONS.signatures),
       readCloudCollection(CLOUD_COLLECTIONS.receipts),
-      readCloudCollection(CLOUD_COLLECTIONS.settings)
+      readCloudCollection(CLOUD_COLLECTIONS.settings),
+      readCloudCollection(CLOUD_COLLECTIONS.rentals)
     ]);
 
-    const cloudHasData=cloudCrew.length || cloudProjects.length || cloudSignatures.length || cloudReceipts.length || cloudSettings.length;
+    const cloudHasData=cloudCrew.length || cloudProjects.length || cloudSignatures.length || cloudReceipts.length || cloudSettings.length || cloudRentals.length;
     if(cloudHasData){
       crew=cloudCrew;
       projects=cloudProjects;
       signatureLibrary=cloudSignatures;
       receipts=cloudReceipts;
+      rentals=cloudRentals;
       if(cloudSettings.length){
         appSettings={...appSettings,...cloudSettings[0],id:"company"};
       }
@@ -189,6 +196,8 @@ async function initializeFirestoreData(){
     renderProjects();
     renderCrew();
     renderPayments();
+    renderRentals();
+    renderFinancial();
     setCloudStatus("online","Firestore Connected");
   }catch(error){
     console.error("Firestore connection failed:",error);
@@ -199,6 +208,8 @@ async function initializeFirestoreData(){
     renderProjects();
     renderCrew();
     renderPayments();
+    renderRentals();
+    renderFinancial();
   }
 }
 function uid(prefix="id"){
@@ -289,12 +300,14 @@ function setView(view){
   const target = document.getElementById(`view-${view}`);
   if(target) target.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===view));
-  const names = {dashboard:"Dashboard",projects:"Projects",crew:"Crew Members",payments:"Payments & Receipts",backup:"Backup & Restore"};
+  const names = {dashboard:"Dashboard",projects:"Projects",crew:"Crew Members",payments:"Payments & Receipts",rentals:"Rental Payments",financial:"Financial",backup:"Backup & Restore"};
   document.getElementById("pageTitle").textContent = names[view] || "FrameFusion";
   if(view==="dashboard") renderDashboard();
   if(view==="projects") renderProjects();
   if(view==="crew") renderCrew();
   if(view==="payments") renderPayments();
+  if(view==="rentals") renderRentals();
+  if(view==="financial") renderFinancial();
   lucide.createIcons();
 }
 
@@ -1108,6 +1121,275 @@ function renderPayments(){
   renderEventPaymentSection();
   renderCrewPayments();
   renderReceiptHistory();
+}
+
+
+
+function rentalStatus(total,paid){
+  const t=Math.max(0,Number(total||0));
+  const p=Math.max(0,Number(paid||0));
+  if(t>0 && p>=t) return "PAID";
+  if(p>0) return "PARTIAL";
+  return "UNPAID";
+}
+function rentalBalance(item){
+  return Math.max(0,Number(item.totalAmount||0)-Number(item.paidAmount||0));
+}
+function rentalReceiptNo(){
+  const d=new Date();
+  const yy=String(d.getFullYear()).slice(-2);
+  const mm=String(d.getMonth()+1).padStart(2,"0");
+  const dd=String(d.getDate()).padStart(2,"0");
+  return `FF-RNT-${yy}${mm}${dd}-${String(Date.now()).slice(-6)}`;
+}
+function renderRentalLiveSummary(){
+  const wrap=document.getElementById("rentalLiveSummary");
+  if(!wrap) return;
+  const total=Number(document.getElementById("rentalTotalAmount")?.value||0);
+  const paid=Number(document.getElementById("rentalPaidAmount")?.value||0);
+  const balance=Math.max(0,total-paid);
+  wrap.innerHTML=`
+    <div><span>Total Rental</span><strong>${money(total)}</strong></div>
+    <div><span>Received</span><strong class="paid-value">${money(paid)}</strong></div>
+    <div><span>Balance</span><strong class="${balance>0?"balance-value":"paid-value"}">${money(balance)}</strong></div>`;
+}
+function rentalEmailParams(item){
+  return {
+    to_email:item.customerEmail,
+    receipt_no:item.receiptNo,
+    status:item.status,
+    payment_date:item.paymentDate,
+    project_name:`Rental - ${item.itemName}`,
+    person_name:item.customerName,
+    payment_type:"Rental Payment",
+    payment_method:item.paymentMethod,
+    amount:Number(item.paidAmount||0).toLocaleString("en-LK"),
+    total_paid:Number(item.paidAmount||0).toLocaleString("en-LK"),
+    balance:rentalBalance(item).toLocaleString("en-LK"),
+    note:[
+      item.note||"",
+      `Qty: ${Number(item.quantity||1)}`,
+      item.startDate||item.endDate ? `Rental: ${item.startDate||"—"} to ${item.endDate||"—"}` : "",
+      Number(item.depositAmount||0)>0 ? `Deposit/Security: ${money(item.depositAmount)}` : ""
+    ].filter(Boolean).join(" | ")
+  };
+}
+async function sendRentalReceiptEmail(item){
+  if(!isEmail(item.customerEmail)) return {ok:false,error:"Valid customer email is required."};
+  try{
+    const response=await fetch("https://api.emailjs.com/api/v1.0/email/send",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        service_id:EMAILJS_CONFIG.serviceId,
+        template_id:EMAILJS_CONFIG.templateId,
+        user_id:EMAILJS_CONFIG.publicKey,
+        template_params:rentalEmailParams(item)
+      })
+    });
+    if(!response.ok){
+      const message=(await response.text()).trim()||`EmailJS error ${response.status}`;
+      throw new Error(message);
+    }
+    item.emailSent=true;
+    item.emailSentAt=Date.now();
+    item.emailError="";
+    item.updatedAt=Date.now();
+    save();
+    return {ok:true};
+  }catch(error){
+    console.error("Rental receipt email failed:",error);
+    item.emailSent=false;
+    item.emailError=error?.message||"Email send failed";
+    item.updatedAt=Date.now();
+    save();
+    return {ok:false,error:item.emailError};
+  }
+}
+async function saveRentalPayment(){
+  const customerName=document.getElementById("rentalCustomerName").value.trim();
+  const customerEmail=normalizedEmail(document.getElementById("rentalCustomerEmail").value);
+  const customerPhone=document.getElementById("rentalCustomerPhone").value.trim();
+  const itemName=document.getElementById("rentalItemName").value.trim();
+  const quantity=Math.max(1,Number(document.getElementById("rentalQuantity").value||1));
+  const totalAmount=Number(document.getElementById("rentalTotalAmount").value||0);
+  const paidAmount=Number(document.getElementById("rentalPaidAmount").value||0);
+  const paymentDate=document.getElementById("rentalPaymentDate").value||todayInputValue();
+  const startDate=document.getElementById("rentalStartDate").value;
+  const endDate=document.getElementById("rentalEndDate").value;
+  const paymentMethod=document.getElementById("rentalPaymentMethod").value||"Bank Transfer";
+  const depositAmount=Number(document.getElementById("rentalDepositAmount").value||0);
+  const note=document.getElementById("rentalNote").value.trim();
+
+  if(!customerName){toast("Enter customer name");return;}
+  if(!isEmail(customerEmail)){toast("Enter a valid customer email");return;}
+  if(!itemName){toast("Enter rental item / package");return;}
+  if(totalAmount<=0){toast("Enter total rental amount");return;}
+  if(paidAmount<=0){toast("Enter amount received");return;}
+
+  const item={
+    id:uid("rental"),
+    receiptNo:rentalReceiptNo(),
+    customerName,customerEmail,customerPhone,itemName,quantity,
+    totalAmount,paidAmount,paymentDate,startDate,endDate,paymentMethod,depositAmount,note,
+    status:rentalStatus(totalAmount,paidAmount),
+    emailSent:false,emailSentAt:0,emailError:"",
+    createdAt:Date.now(),updatedAt:Date.now()
+  };
+  rentals.unshift(item);
+  save();
+  renderRentals();
+  renderFinancial();
+
+  document.getElementById("rentalPaidAmount").value="";
+  document.getElementById("rentalNote").value="";
+  renderRentalLiveSummary();
+
+  const result=await sendRentalReceiptEmail(item);
+  renderRentals();
+  toast(result.ok ? `Rental saved. Receipt ${item.receiptNo} emailed.` : `Rental saved. ${result.error}`);
+}
+async function resendRentalReceipt(id){
+  const item=rentals.find(x=>x.id===id);
+  if(!item) return;
+  const result=await sendRentalReceiptEmail(item);
+  renderRentals();
+  toast(result.ok ? `Receipt ${item.receiptNo} emailed again` : result.error);
+}
+function deleteRental(id){
+  const item=rentals.find(x=>x.id===id);
+  if(!item) return;
+  if(!confirm(`Delete rental receipt ${item.receiptNo}?`)) return;
+  rentals=rentals.filter(x=>x.id!==id);
+  save();
+  renderRentals();
+  renderFinancial();
+  toast("Rental deleted");
+}
+function renderRentalHistory(){
+  const wrap=document.getElementById("rentalHistory");
+  if(!wrap) return;
+  const q=(document.getElementById("rentalSearch")?.value||"").trim().toLowerCase();
+  const list=rentals.filter(r=>[r.receiptNo,r.customerName,r.customerEmail,r.customerPhone,r.itemName,r.status].join(" ").toLowerCase().includes(q));
+  if(!list.length){
+    wrap.innerHTML=emptyState("package-open","No rental payments found",q?"Try another search.":"Save your first rental payment.");
+    lucide.createIcons();
+    return;
+  }
+  wrap.innerHTML=`<table class="data-table">
+    <thead><tr><th>Receipt</th><th>Customer</th><th>Rental</th><th>Received</th><th>Balance</th><th>Status</th><th>Email</th><th style="text-align:right">Actions</th></tr></thead>
+    <tbody>${list.map(r=>`
+      <tr>
+        <td><b class="text-ffnavy">${escapeHtml(r.receiptNo)}</b><div class="text-xs text-slate-400">${escapeHtml(r.paymentDate||"")}</div></td>
+        <td><div class="font-bold">${escapeHtml(r.customerName)}</div><div class="text-xs text-slate-400">${escapeHtml(r.customerEmail||"")}</div></td>
+        <td><div>${escapeHtml(r.itemName)}</div><div class="text-xs text-slate-400">Qty ${Number(r.quantity||1)}${r.startDate||r.endDate?` • ${escapeHtml(r.startDate||"—")} → ${escapeHtml(r.endDate||"—")}`:""}</div></td>
+        <td><b>${money(r.paidAmount)}</b></td>
+        <td><b>${money(rentalBalance(r))}</b></td>
+        <td>${statusPill(r.status)}</td>
+        <td><div class="receipt-email-state ${r.emailSent?"receipt-email-ok":"receipt-email-warn"}">${r.emailSent?"Sent by EmailJS":(r.emailError?"Email failed":"Not sent")}</div></td>
+        <td><div class="flex justify-end gap-2">
+          <button class="icon-mini" title="Resend" onclick="resendRentalReceipt('${r.id}')"><i data-lucide="send"></i></button>
+          <button class="icon-mini danger" title="Delete" onclick="deleteRental('${r.id}')"><i data-lucide="trash-2"></i></button>
+        </div></td>
+      </tr>`).join("")}</tbody>
+  </table>`;
+  lucide.createIcons();
+}
+function renderRentals(){
+  if(!document.getElementById("view-rentals")) return;
+  const date=document.getElementById("rentalPaymentDate");
+  if(date && !date.value) date.value=todayInputValue();
+  renderRentalLiveSummary();
+  renderRentalHistory();
+}
+function financialProjectRows(){
+  return projects.map(p=>{
+    const equipment=equipmentTotalForProject(p);
+    const crewPaid=(p.crew||[]).reduce((sum,m)=>sum+crewPaymentsTotal(m),0);
+    const revenueReceived=eventPaymentsTotal(p);
+    return {p,equipment,crewPaid,revenueReceived,profit:revenueReceived-equipment-crewPaid};
+  });
+}
+function financialCrewTotals(){
+  const map=new Map();
+  for(const p of projects){
+    for(const m of (p.crew||[])){
+      const key=m.crewId||`${m.name}|${m.role}`;
+      const paid=crewPaymentsTotal(m);
+      if(!map.has(key)){
+        map.set(key,{name:m.name||"Unknown",role:m.role||"",projects:new Set(),paid:0});
+      }
+      const row=map.get(key);
+      row.paid+=paid;
+      if(paid>0) row.projects.add(p.name);
+    }
+  }
+  return [...map.values()]
+    .map(x=>({...x,projectCount:x.projects.size,projects:[...x.projects]}))
+    .sort((a,b)=>b.paid-a.paid);
+}
+function renderFinancial(){
+  const stats=document.getElementById("financialStats");
+  if(!stats) return;
+  const rows=financialProjectRows();
+  const projectIncome=rows.reduce((s,x)=>s+x.revenueReceived,0);
+  const equipment=rows.reduce((s,x)=>s+x.equipment,0);
+  const crewPaid=rows.reduce((s,x)=>s+x.crewPaid,0);
+  const rentalIncome=rentals.reduce((s,r)=>s+Number(r.paidAmount||0),0);
+  const net=projectIncome+rentalIncome-equipment-crewPaid;
+
+  const data=[
+    ["wallet",money(projectIncome),"Project Income"],
+    ["package-open",money(rentalIncome),"Rental Income"],
+    ["wrench",money(equipment),"Equipment Costs"],
+    ["users",money(crewPaid),"Crew Paid"],
+    ["badge-dollar-sign",money(net),net>=0?"Net Profit":"Net Loss"]
+  ];
+  stats.innerHTML=data.map(([icon,value,label],i)=>`
+    <div class="stat-card">
+      <div class="stat-top"><span class="stat-icon"><i data-lucide="${icon}"></i></span></div>
+      <div class="stat-value ${i===4?(net>=0?"financial-positive":"financial-negative"):""}">${escapeHtml(value)}</div>
+      <div class="stat-label">${escapeHtml(label)}</div>
+    </div>`).join("");
+
+  const projectsWrap=document.getElementById("financialProjectsTable");
+  projectsWrap.innerHTML=rows.length?`<table class="data-table">
+    <thead><tr><th>Project</th><th>Income Received</th><th>Equipment</th><th>Crew Paid</th><th>Profit / Loss</th></tr></thead>
+    <tbody>${rows.map(x=>`
+      <tr>
+        <td><b class="text-ffnavy">${escapeHtml(x.p.name)}</b></td>
+        <td>${money(x.revenueReceived)}</td>
+        <td>${money(x.equipment)}</td>
+        <td>${money(x.crewPaid)}</td>
+        <td><b class="${x.profit>=0?"financial-positive":"financial-negative"}">${money(x.profit)}</b></td>
+      </tr>`).join("")}</tbody>
+  </table>`:emptyState("folder-kanban","No project financials","Create projects and record payments first.");
+
+  const rentalWrap=document.getElementById("financialRentalSummary");
+  const totalRentalValue=rentals.reduce((s,r)=>s+Number(r.totalAmount||0),0);
+  const outstanding=Math.max(0,totalRentalValue-rentalIncome);
+  const deposits=rentals.reduce((s,r)=>s+Number(r.depositAmount||0),0);
+  rentalWrap.innerHTML=`<div class="financial-rental-card">
+    <div class="financial-rental-line"><span>Rental Records</span><strong>${rentals.length}</strong></div>
+    <div class="financial-rental-line"><span>Total Rental Value</span><strong>${money(totalRentalValue)}</strong></div>
+    <div class="financial-rental-line"><span>Income Received</span><strong class="financial-positive">${money(rentalIncome)}</strong></div>
+    <div class="financial-rental-line"><span>Outstanding</span><strong class="${outstanding>0?"financial-negative":"financial-positive"}">${money(outstanding)}</strong></div>
+    <div class="financial-rental-line"><span>Deposits / Security</span><strong>${money(deposits)}</strong></div>
+  </div>`;
+
+  const crewWrap=document.getElementById("financialCrewTable");
+  const crewRows=financialCrewTotals();
+  crewWrap.innerHTML=crewRows.length?`<table class="data-table">
+    <thead><tr><th>Crew Member</th><th>Role</th><th>Projects Paid</th><th>Total Paid</th></tr></thead>
+    <tbody>${crewRows.map(c=>`
+      <tr>
+        <td><b class="text-ffnavy">${escapeHtml(c.name)}</b></td>
+        <td><span class="role-pill">${escapeHtml(c.role||"—")}</span></td>
+        <td><div>${c.projectCount}</div><div class="text-xs text-slate-400">${escapeHtml(c.projects.join(", "))}</div></td>
+        <td><b>${money(c.paid)}</b></td>
+      </tr>`).join("")}</tbody>
+  </table>`:emptyState("users","No crew payments yet","Crew payment totals will appear after payments are recorded.");
+  lucide.createIcons();
 }
 
 
@@ -2009,7 +2291,7 @@ async function downloadActiveReport(){
 
 
 function exportBackup(){
-  const data={app:"FrameFusion Studio Budget & Crew Manager",version:3,exportedAt:new Date().toISOString(),crew,projects,signatureLibrary,receipts,appSettings};
+  const data={app:"FrameFusion Studio Budget & Crew Manager",version:4,exportedAt:new Date().toISOString(),crew,projects,signatureLibrary,receipts,appSettings,rentals};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
@@ -2028,9 +2310,10 @@ function restoreBackup(file){
       projects=data.projects;
       signatureLibrary=Array.isArray(data.signatureLibrary)?data.signatureLibrary:[];
       receipts=Array.isArray(data.receipts)?data.receipts:[];
+      rentals=Array.isArray(data.rentals)?data.rentals:[];
       appSettings=data.appSettings&&typeof data.appSettings==="object"?{...appSettings,...data.appSettings,id:"company"}:appSettings;
       save();
-      renderDashboard();renderProjects();renderCrew();renderPayments();
+      renderDashboard();renderProjects();renderCrew();renderPayments();renderRentals();renderFinancial();
       toast("Backup restored and queued for Firestore sync");
     }catch(e){ alert("Invalid FrameFusion backup file."); }
   };
@@ -2055,6 +2338,8 @@ document.addEventListener("DOMContentLoaded",()=>{
   document.querySelector('[data-action="new-project"]').addEventListener("click",newProject);
   document.querySelector('[data-action="new-crew"]').addEventListener("click",newCrew);
   document.querySelector('[data-action="payments"]').addEventListener("click",()=>setView("payments"));
+  document.querySelector('[data-action="rentals"]').addEventListener("click",()=>setView("rentals"));
+  document.querySelector('[data-action="financial"]').addEventListener("click",()=>setView("financial"));
   document.querySelector('[data-action="backup"]').addEventListener("click",exportBackup);
 
   document.getElementById("crewForm").addEventListener("submit",(e)=>{
@@ -2135,6 +2420,12 @@ document.addEventListener("DOMContentLoaded",()=>{
   document.getElementById("saveEventPaymentBtn").addEventListener("click",saveEventPayment);
   document.getElementById("saveCrewPaymentBtn").addEventListener("click",saveCrewPayment);
 
+  ["rentalTotalAmount","rentalPaidAmount","rentalDepositAmount"].forEach(id=>{
+    document.getElementById(id)?.addEventListener("input",renderRentalLiveSummary);
+  });
+  document.getElementById("rentalSearch")?.addEventListener("input",renderRentalHistory);
+  document.getElementById("saveRentalPaymentBtn")?.addEventListener("click",saveRentalPayment);
+
   document.getElementById("exportBackupBtn").addEventListener("click",exportBackup);
   document.getElementById("restoreInput").addEventListener("change",e=>restoreBackup(e.target.files[0]));
 
@@ -2150,6 +2441,8 @@ window.deleteCrew=deleteCrew;
 window.editProject=editProject;
 window.duplicateProject=duplicateProject;
 window.deleteProject=deleteProject;
+window.resendRentalReceipt=resendRentalReceipt;
+window.deleteRental=deleteRental;
 window.openReport=openReport;
 window.openProjectPayments=openProjectPayments;
 window.openCrewPayment=openCrewPayment;

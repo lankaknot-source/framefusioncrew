@@ -896,3 +896,22 @@ body.signature-open{
     font-size:9px!important;
   }
 }
+
+
+/* v9 — Rental Payments + Financial */
+.financial-positive{color:#16a34a!important}
+.financial-negative{color:#dc2626!important}
+.financial-rental-card{display:grid;gap:10px}
+.financial-rental-line{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:12px 13px;border:1px solid #e2e8ef;border-radius:12px;background:#fafcfe;
+}
+.financial-rental-line span{color:#718096;font-size:11px;font-weight:850}
+.financial-rental-line strong{color:#0f1b31;font-size:15px;font-weight:950}
+@media(max-width:1023px){
+  .sidebar nav{grid-template-columns:repeat(7,1fr)!important}
+}
+@media(max-width:767px){
+  .sidebar{overflow-x:auto}
+  .sidebar nav{min-width:610px}
+}
