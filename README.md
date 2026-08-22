@@ -295,3 +295,59 @@ Rental payments can also be linked to a selected Project Service / Department, e
 - Per-project financial table shows Production Cost, Rental Included, Other Production Cost, Crew Paid and Profit/Loss.
 - Added Project Service Budget Allocation table.
 - Budget report and downloadable PDF now include a Project Service Budget Allocation section.
+
+
+## v14 — Full Department / Service Budgets
+
+The Project is now a container. Every selected service / department has its own independent budget.
+
+Example project:
+- Total Revenue: LKR 180,000
+- Live Production Revenue: LKR 120,000
+- Photography Revenue: LKR 60,000
+
+Each department now has its own:
+- Revenue Allocation
+- Production Cost
+- Target Profit
+- Crew Members
+- Crew allocation/payment budget
+- Rental payments included inside that department's Production Cost
+- Budget Net Profit
+- Profit vs Target
+
+### Rental handling
+If Live Production Production Cost is LKR 70,000 and Live Production rental payments are LKR 50,000:
+- Production Cost = LKR 70,000
+- Rental Included = LKR 50,000
+- Other Production Cost = LKR 20,000
+
+The LKR 50,000 rental is **not deducted again**.
+
+Project-linked new rental records now require a Service / Department selection.
+
+### Crew
+Crew is assigned separately inside each department. The same saved crew member can be assigned to Live Production and Photography with different roles and payment allocations.
+
+Crew Payments page is grouped by Department and receipts identify the Project / Department.
+
+### Financials
+The Financial page now shows:
+- Project contract revenue and received income
+- Department production costs
+- Department crew allocations and actual crew payments
+- Department target profit
+- Department budget profit
+- Budget Profit vs Target
+- Separate cumulative actual payments to each crew member across all departments
+
+### Reports
+HTML report and generated PDF now show each Department separately with:
+- Department Revenue
+- Production Cost
+- Rental Included
+- Other Production Cost
+- Crew Allocation
+- Target Profit
+- Budget Net Profit
+- Department-specific Crew Breakdown

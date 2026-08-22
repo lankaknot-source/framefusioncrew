@@ -299,7 +299,7 @@
             <div class="panel-head flex-col md:flex-row md:items-center gap-4">
               <div>
                 <h3>Crew Payments</h3>
-                <p>Mark crew payments as paid/partial and send a receipt to their email.</p>
+                <p>Crew payments are grouped by project service / department, with separate due amounts and receipts.</p>
               </div>
               <label class="field md:ml-auto w-full md:w-80">
                 <span>Project</span>
@@ -475,8 +475,8 @@
           <div class="panel mt-6">
             <div class="panel-head">
               <div>
-                <h3>Project Service Budget Allocation</h3>
-                <p>Revenue allocated separately to Live Production, Photography, After Movie, Videography and other selected services.</p>
+                <h3>Department Budget Breakdown</h3>
+                <p>Revenue, production cost, rental inclusion, crew allocation and target profit for every service / department.</p>
               </div>
             </div>
             <div id="financialServiceTable" class="table-wrap mt-5"></div>
@@ -617,7 +617,7 @@
 
           <div class="field md:col-span-2 xl:col-span-4 project-services-builder">
             <span>Project Services / Departments *</span>
-            <p class="equipment-help">Select everything included in this project, then allocate the project revenue separately to each service.</p>
+            <p class="equipment-help">Each selected service becomes its own department budget with separate Revenue, Production Cost, Target Profit and Crew.</p>
 
             <div id="projectServicePresets" class="service-preset-grid mt-3"></div>
 
@@ -645,45 +645,6 @@
               </div>
             </div>
           </div>
-          <div class="field md:col-span-2">
-            <span>Total Production Cost * <small>(Rental payments included)</small></span>
-            <div class="equipment-mode-switch">
-              <label class="equipment-mode-option">
-                <input type="radio" name="equipmentMode" value="total" checked />
-                <span><i data-lucide="calculator"></i> Enter Total Production Cost</span>
-              </label>
-              <label class="equipment-mode-option">
-                <input type="radio" name="equipmentMode" value="itemized" />
-                <span><i data-lucide="list-plus"></i> Itemized Equipment List</span>
-              </label>
-            </div>
-
-            <div id="equipmentTotalMode" class="mt-3">
-              <input id="projectEquipment" type="number" min="0" step="1" inputmode="numeric" placeholder="70000" />
-              <p class="equipment-help">This is the full production cost. Rental payments linked to this project are part of this amount and will not be deducted again.</p>
-            </div>
-
-            <div id="equipmentItemizedMode" class="hidden mt-3">
-              <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
-                <div>
-                  <div class="font-black text-ffnavy text-sm">Production Cost Breakdown</div>
-                  <div class="text-xs text-slate-500">Add equipment, services and other production cost items. Linked rental payments are still treated as included in this total.</div>
-                </div>
-                <button id="addEquipmentItemBtn" type="button" class="btn btn-light sm:ml-auto">
-                  <i data-lucide="plus"></i>Add Equipment
-                </button>
-              </div>
-              <div id="equipmentItemsList" class="grid gap-2"></div>
-              <div class="equipment-total-box">
-                <span>Total Production Cost</span>
-                <strong id="equipmentItemsTotal">LKR 0</strong>
-              </div>
-            </div>
-          </div>
-          <label class="field">
-            <span>Target Company Profit (LKR)</span>
-            <input id="projectTargetProfit" type="number" min="0" step="1" inputmode="numeric" placeholder="12000" />
-          </label>
           <label class="field">
             <span>Report Subtitle</span>
             <input id="projectSubtitle" placeholder="Official Budget Breakdown & Crew Payment Allocation" />
@@ -700,23 +661,18 @@
 
         <div class="section-divider"></div>
 
-        <div class="flex flex-col lg:flex-row lg:items-center gap-3">
-          <div>
-            <h4 class="font-black text-lg text-ffnavy">Crew Payment Allocation</h4>
-            <p class="text-sm text-slate-500">Assign saved crew members and change the payment for this project.</p>
-          </div>
-          <button id="addCrewToProjectBtn" type="button" class="btn btn-light lg:ml-auto"><i data-lucide="plus"></i>Add Crew to Project</button>
+        <div>
+          <h4 class="font-black text-lg text-ffnavy">Project Department Totals</h4>
+          <p class="text-sm text-slate-500">These totals are automatically calculated from the individual service / department budgets above.</p>
         </div>
 
-        <div id="projectCrewList" class="grid gap-3 mt-4"></div>
-
-        <div class="project-calcs project-calcs-v13 mt-5">
+        <div class="project-calcs project-calcs-v14 mt-4">
+          <div><span>Total Project Revenue</span><strong id="calcProjectRevenue">LKR 0</strong></div>
           <div><span>Total Production Cost</span><strong id="calcProductionCost">LKR 0</strong></div>
-          <div><span>Rental Paid Inside Production Cost</span><strong id="calcRentalIncluded">LKR 0</strong></div>
-          <div><span>Other / Remaining Production Cost</span><strong id="calcProductionOther">LKR 0</strong></div>
-          <div><span>Balance after Production Cost</span><strong id="calcBalance">LKR 0</strong></div>
-          <div><span>Total Crew Pay</span><strong id="calcCrew">LKR 0</strong></div>
-          <div><span>Net Profit</span><strong id="calcProfit" class="text-ffgreen">LKR 0</strong></div>
+          <div><span>Rental Paid Inside Production</span><strong id="calcRentalIncluded">LKR 0</strong></div>
+          <div><span>Total Crew Allocation</span><strong id="calcCrew">LKR 0</strong></div>
+          <div><span>Total Target Profit</span><strong id="calcTargetProfit">LKR 0</strong></div>
+          <div><span>Budget Net Profit</span><strong id="calcProfit" class="text-ffgreen">LKR 0</strong></div>
         </div>
 
         <div class="flex flex-wrap justify-end gap-2 mt-6">
@@ -733,7 +689,7 @@
       <div class="modal-head">
         <div>
           <p class="eyebrow">Project Crew</p>
-          <h3>Select Crew Members</h3>
+          <h3 id="crewPickerModalTitle">Select Crew Members</h3>
         </div>
         <button class="icon-btn" data-close="crewPickerModal"><i data-lucide="x"></i></button>
       </div>
@@ -757,6 +713,7 @@
       </div>
 
       <input id="crewPayProjectId" type="hidden" />
+      <input id="crewPayServiceId" type="hidden" />
       <input id="crewPayMemberIndex" type="hidden" />
 
       <div id="crewPaySummary" class="payment-summary mt-5"></div>

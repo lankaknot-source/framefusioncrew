@@ -1285,3 +1285,217 @@ body.signature-open{
     grid-template-columns:minmax(0,1fr);
   }
 }
+
+
+/* v14 — Department-level budgets */
+.department-budget-card{
+  border:1px solid #d9e4ee;
+  border-radius:18px;
+  background:#fff;
+  padding:16px;
+  box-shadow:0 8px 25px rgba(15,27,49,.045);
+}
+.department-card-head{
+  display:grid;
+  grid-template-columns:40px minmax(0,1fr) 38px;
+  gap:10px;
+  align-items:end;
+}
+.department-title-input span,
+.department-budget-fields label span{
+  display:block;
+  color:#66758b;
+  font-size:10px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.055em;
+  margin-bottom:5px;
+}
+.department-title-input input,
+.department-budget-fields input{
+  width:100%;
+  min-width:0;
+  border:1px solid #d7e0e9;
+  background:#fff;
+  border-radius:10px;
+  padding:10px 11px;
+  color:#132038;
+  font-weight:800;
+}
+.department-budget-fields{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px;
+  margin-top:14px;
+}
+.department-budget-fields label{
+  min-width:0;
+}
+.department-budget-fields label small{
+  display:block;
+  color:#8a97a9;
+  font-size:9px;
+  line-height:1.35;
+  margin-top:5px;
+}
+.department-metrics{
+  display:grid;
+  grid-template-columns:repeat(6,minmax(0,1fr));
+  gap:8px;
+  margin-top:14px;
+}
+.department-metrics > div{
+  border:1px solid #e2e8ef;
+  border-radius:11px;
+  background:#f9fbfd;
+  padding:10px;
+}
+.department-metrics span{
+  display:block;
+  font-size:8px;
+  line-height:1.2;
+  text-transform:uppercase;
+  letter-spacing:.055em;
+  font-weight:900;
+  color:#7c899c;
+}
+.department-metrics strong{
+  display:block;
+  margin-top:5px;
+  color:#132038;
+  font-size:12px;
+  font-weight:950;
+}
+.department-budget-note{
+  margin-top:10px;
+  border:1px solid #bfe7cc;
+  background:#effbf3;
+  color:#24743b;
+  border-radius:10px;
+  padding:9px 11px;
+  font-size:10px;
+  font-weight:700;
+}
+.department-budget-note.warning{
+  border-color:#f4c7c7;
+  background:#fff1f1;
+  color:#b42318;
+}
+.department-crew-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:16px;
+  padding-top:14px;
+  border-top:1px solid #edf1f5;
+}
+.department-crew-head h5{
+  margin:0;
+  color:#142138;
+  font-size:14px;
+  font-weight:950;
+}
+.department-crew-head p{
+  margin:3px 0 0;
+  color:#8491a3;
+  font-size:10px;
+}
+.department-crew-list{
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+}
+.department-crew-row{
+  display:grid;
+  grid-template-columns:minmax(145px,1.15fr) minmax(135px,.85fr) minmax(120px,.65fr) 36px;
+  gap:9px;
+  align-items:center;
+  border:1px solid #e2e8ef;
+  background:#fbfcfe;
+  border-radius:11px;
+  padding:9px;
+}
+.department-crew-row input{
+  width:100%;
+  min-width:0;
+  border:1px solid #d9e2eb;
+  background:#fff;
+  border-radius:9px;
+  padding:9px 10px;
+}
+.department-empty-crew{
+  border:1px dashed #cdd8e3;
+  border-radius:11px;
+  padding:12px;
+  text-align:center;
+  color:#8a96a7;
+  font-size:10px;
+  background:#fafcfe;
+}
+.project-calcs-v14{
+  grid-template-columns:repeat(3,minmax(0,1fr));
+}
+.crew-payment-department{
+  border:1px solid #dce5ee;
+  border-radius:15px;
+  padding:13px;
+  background:#fafcfe;
+}
+.crew-payment-department-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+}
+.crew-payment-department-name{
+  color:#132038;
+  font-size:15px;
+  font-weight:950;
+}
+.department-financial-table{min-width:1650px}
+.financial-project-v14{min-width:1320px}
+.report-subsection-title{
+  margin:20px 0 10px;
+  color:#1a2940;
+  font-size:14px;
+  font-weight:900;
+  border-left:4px solid #14a9e7;
+  padding-left:10px;
+}
+
+@media(max-width:1100px){
+  .department-metrics{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+}
+@media(max-width:820px){
+  .department-budget-fields{
+    grid-template-columns:minmax(0,1fr);
+  }
+  .department-crew-row{
+    grid-template-columns:minmax(0,1fr) 36px;
+  }
+  .department-crew-row > div:first-child,
+  .department-crew-row > input{
+    grid-column:1/2;
+  }
+  .department-crew-row .remove-row{
+    grid-column:2/3;
+    grid-row:1/4;
+    align-self:center;
+  }
+  .project-calcs-v14{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+@media(max-width:560px){
+  .department-metrics,
+  .project-calcs-v14{
+    grid-template-columns:minmax(0,1fr);
+  }
+  .department-crew-head{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+}

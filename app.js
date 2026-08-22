@@ -73,6 +73,7 @@ let cloudSyncPending = false;
 let editingProjectCrew = [];
 let editingEquipmentItems = [];
 let editingProjectServices = [];
+let activeProjectServiceCrewId = null;
 let activeReportProjectId = null;
 let activeSignatureRole = null;
 let signaturePadHasInk = false;
@@ -192,6 +193,16 @@ function migrateRentalExpenseRecords(){
 }
 
 
+function normalizeDepartmentCrew(list){
+  return (Array.isArray(list)?list:[]).map(m=>({
+    crewId:m.crewId||"",
+    name:String(m.name||"").trim(),
+    role:String(m.role||"").trim(),
+    email:String(m.email||""),
+    payment:Math.max(0,Number(m.payment||0)),
+    payments:Array.isArray(m.payments)?m.payments:[]
+  }));
+}
 function normalizeProjectServices(p){
   if(!p) return [];
   if(!Array.isArray(p.services)) p.services=[];
@@ -200,25 +211,87 @@ function normalizeProjectServices(p){
     .map(s=>({
       id:s.id||uid("service"),
       name:String(s.name||"").trim(),
-      budget:Math.max(0,Number(s.budget||0))
+      budget:Math.max(0,Number(s.budget||0)),
+      productionCost:Math.max(0,Number(s.productionCost||0)),
+      targetProfit:Math.max(0,Number(s.targetProfit||0)),
+      crew:normalizeDepartmentCrew(s.crew)
     }));
   return p.services;
+}
+function serviceCrewAllocationTotal(service){
+  return (service?.crew||[]).reduce((sum,m)=>sum+Number(m.payment||0),0);
+}
+function serviceCrewPaidTotal(service){
+  return (service?.crew||[]).reduce((sum,m)=>sum+crewPaymentsTotal(m),0);
+}
+function projectCrewAssignments(p){
+  return (p?.services||[]).flatMap(s=>(s.crew||[]).map(m=>({...m,serviceId:s.id,serviceName:s.name})));
+}
+function projectCrewAllocationTotal(p){
+  return (p?.services||[]).reduce((sum,s)=>sum+serviceCrewAllocationTotal(s),0);
+}
+function projectCrewPaidTotal(p){
+  return (p?.services||[]).reduce((sum,s)=>sum+serviceCrewPaidTotal(s),0);
+}
+function projectProductionCostTotal(p){
+  return (p?.services||[]).reduce((sum,s)=>sum+Number(s.productionCost||0),0);
+}
+function projectTargetProfitTotal(p){
+  return (p?.services||[]).reduce((sum,s)=>sum+Number(s.targetProfit||0),0);
+}
+function serviceBudgetProfit(service){
+  return Number(service?.budget||0)-Number(service?.productionCost||0)-serviceCrewAllocationTotal(service);
+}
+function syncProjectLegacyTotals(p){
+  if(!p) return;
+  normalizeProjectServices(p);
+  p.equipment=projectProductionCostTotal(p);
+  p.equipmentMode="total";
+  p.equipmentItems=[];
+  p.targetProfit=projectTargetProfitTotal(p);
+  p.crew=projectCrewAssignments(p);
+  p.departmentBudgetVersion=14;
 }
 function migrateProjectServices(){
   let changed=false;
   projects.forEach(p=>{
-    if(!Array.isArray(p.services) || !p.services.length){
+    const hadServices=Array.isArray(p.services) && p.services.length;
+    if(!hadServices){
       p.services=[{
         id:uid("service"),
         name:"General Production",
-        budget:Math.max(0,Number(p.revenue||0))
+        budget:Math.max(0,Number(p.revenue||0)),
+        productionCost:Math.max(0,Number(p.equipment||0)),
+        targetProfit:Math.max(0,Number(p.targetProfit||0)),
+        crew:normalizeDepartmentCrew(p.crew)
       }];
+      changed=true;
+    }else if(Number(p.departmentBudgetVersion||0)<14){
+      // v13 had revenue allocation only. Preserve every old value by moving the
+      // previous project-wide production cost, target and crew into the first department.
+      const original=JSON.parse(JSON.stringify(p.services));
+      p.services=original.map((s,i)=>({
+        id:s.id||uid("service"),
+        name:String(s.name||"Service").trim(),
+        budget:Math.max(0,Number(s.budget||0)),
+        productionCost:i===0?Math.max(0,Number(p.equipment||0)):0,
+        targetProfit:i===0?Math.max(0,Number(p.targetProfit||0)):0,
+        crew:i===0?normalizeDepartmentCrew(p.crew):[]
+      }));
       changed=true;
     }else{
       const before=JSON.stringify(p.services);
       normalizeProjectServices(p);
       if(before!==JSON.stringify(p.services)) changed=true;
     }
+    const legacyBefore=JSON.stringify({
+      equipment:p.equipment,targetProfit:p.targetProfit,crew:p.crew,version:p.departmentBudgetVersion
+    });
+    syncProjectLegacyTotals(p);
+    const legacyAfter=JSON.stringify({
+      equipment:p.equipment,targetProfit:p.targetProfit,crew:p.crew,version:p.departmentBudgetVersion
+    });
+    if(legacyBefore!==legacyAfter) changed=true;
   });
   if(changed) saveLocalCache();
 }
@@ -230,6 +303,7 @@ function projectServiceById(projectId,serviceId){
   const p=projects.find(x=>x.id===projectId);
   return (p?.services||[]).find(s=>s.id===serviceId)||null;
 }
+
 function projectRentalPaid(projectId){
   if(!projectId) return 0;
   return rentals
@@ -351,18 +425,26 @@ function seedDemo(){
     clientEmail:"",
     location:"",
     revenue:120000,
-    services:[{id:uid("service"),name:"Live Production",budget:120000}],
+    services:[{
+      id:uid("service"),
+      name:"Live Production",
+      budget:120000,
+      productionCost:70000,
+      targetProfit:12000,
+      crew:crew.map(c=>({crewId:c.id,name:c.name,role:c.role,email:c.email||"",payment:c.rate,payments:[]}))
+    }],
     equipment:70000,
     equipmentMode:"total",
     equipmentItems:[],
     targetProfit:12000,
+    departmentBudgetVersion:14,
     subtitle:"Official Budget Breakdown & Crew Payment Allocation",
     directorName:"",
     managerName:"",
     signatures:{director:"",manager:""},
     signatureRefs:{director:"",manager:""},
     eventPayments:[],
-    crew:crew.map(c=>({crewId:c.id,name:c.name,role:c.role,email:c.email||"",payment:c.rate,payments:[]})),
+    crew:[],
     createdAt:Date.now(),
     updatedAt:Date.now()
   }];
@@ -373,20 +455,25 @@ function equipmentItemsTotal(items){
   return (items||[]).reduce((sum,item)=>sum+Number(item.cost||0),0);
 }
 function equipmentTotalForProject(p){
-  if((p.equipmentMode||"total")==="itemized" && Array.isArray(p.equipmentItems)){
+  if(Array.isArray(p?.services) && p.services.length){
+    return projectProductionCostTotal(p);
+  }
+  if((p?.equipmentMode||"total")==="itemized" && Array.isArray(p?.equipmentItems)){
     return equipmentItemsTotal(p.equipmentItems);
   }
-  return Number(p.equipment||0);
+  return Number(p?.equipment||0);
 }
 function projectNumbers(p){
-  const crewTotal = (p.crew||[]).reduce((s,x)=>s+Number(x.payment||0),0);
-  const equipmentTotal = equipmentTotalForProject(p);
-  const rentalPaid = projectRentalPaid(p?.id);
-  const productionOther = Math.max(0,equipmentTotal-rentalPaid);
-  const productionOverrun = Math.max(0,rentalPaid-equipmentTotal);
-  const balance = Number(p.revenue||0) - equipmentTotal;
-  const netProfit = balance - crewTotal;
-  return {crewTotal,equipmentTotal,rentalPaid,productionOther,productionOverrun,balance,netProfit};
+  normalizeProjectServices(p);
+  const crewTotal=projectCrewAllocationTotal(p);
+  const equipmentTotal=projectProductionCostTotal(p);
+  const targetProfit=projectTargetProfitTotal(p);
+  const rentalPaid=projectRentalPaid(p?.id);
+  const productionOther=Math.max(0,equipmentTotal-rentalPaid);
+  const productionOverrun=Math.max(0,rentalPaid-equipmentTotal);
+  const balance=Number(p?.revenue||0)-equipmentTotal;
+  const netProfit=Number(p?.revenue||0)-equipmentTotal-crewTotal;
+  return {crewTotal,equipmentTotal,targetProfit,rentalPaid,productionOther,productionOverrun,balance,netProfit};
 }
 
 function setView(view){
@@ -466,7 +553,7 @@ function renderProjects(){
     return `<article class="project-card">
       <div class="project-card-head">
         <span class="project-badge"><i data-lucide="calendar-days"></i>${formatDate(p.date)}</span>
-        <span class="text-xs font-bold text-slate-400">${(p.crew||[]).length} crew</span>
+        <span class="text-xs font-bold text-slate-400">${projectCrewAssignments(p).length} crew assignments</span>
       </div>
       <h4>${escapeHtml(p.name)}</h4>
       <div class="project-meta">${escapeHtml(p.client || p.location || "FrameFusion Studio Project")}</div>
@@ -554,25 +641,23 @@ function resetProjectForm(){
   document.getElementById("projectId").value="";
   document.getElementById("projectModalTitle").textContent="Create Project";
   document.getElementById("projectName").value="Match Live Coverage Budget";
-  document.getElementById("projectSubtitle").value="Official Budget Breakdown & Crew Payment Allocation";
+  document.getElementById("projectSubtitle").value="Official Department Budget Breakdown & Crew Payment Allocation";
   document.getElementById("projectClientEmail").value="";
   document.getElementById("projectDirectorName").value="";
   document.getElementById("projectManagerName").value="";
-  document.getElementById("projectEquipment").value="";
-  editingProjectCrew=[];
-  editingEquipmentItems=[];
   editingProjectServices=[];
+  activeProjectServiceCrewId=null;
   renderProjectServiceBuilder();
-  setEquipmentMode("total");
-  renderEquipmentItems();
-  renderProjectCrewRows();
   updateProjectCalcs();
 }
 function newProject(){
-  resetProjectForm(); openModal("projectModal");
+  resetProjectForm();
+  openModal("projectModal");
 }
 function editProject(id){
-  const p=projects.find(x=>x.id===id); if(!p) return;
+  const p=projects.find(x=>x.id===id);
+  if(!p) return;
+  normalizeProjectServices(p);
   document.getElementById("projectId").value=p.id;
   document.getElementById("projectName").value=p.name||"";
   document.getElementById("projectDate").value=p.date||"";
@@ -580,34 +665,41 @@ function editProject(id){
   document.getElementById("projectClientEmail").value=p.clientEmail||"";
   document.getElementById("projectLocation").value=p.location||"";
   document.getElementById("projectRevenue").value=p.revenue||0;
-  editingProjectServices=JSON.parse(JSON.stringify(normalizeProjectServices(p)));
-  renderProjectServiceBuilder();
-  document.getElementById("projectEquipment").value=p.equipment||0;
-  const savedEquipmentMode = p.equipmentMode || ((p.equipmentItems||[]).length ? "itemized" : "total");
-  editingEquipmentItems=JSON.parse(JSON.stringify(p.equipmentItems||[]));
-  setEquipmentMode(savedEquipmentMode);
-  renderEquipmentItems();
-  document.getElementById("projectTargetProfit").value=p.targetProfit||0;
+  editingProjectServices=JSON.parse(JSON.stringify(p.services||[]));
   document.getElementById("projectSubtitle").value=p.subtitle||"";
   document.getElementById("projectDirectorName").value=p.directorName||"";
   document.getElementById("projectManagerName").value=p.managerName||"";
-  editingProjectCrew=JSON.parse(JSON.stringify(p.crew||[]));
   document.getElementById("projectModalTitle").textContent="Edit Project";
-  renderProjectCrewRows(); updateProjectCalcs(); openModal("projectModal");
+  activeProjectServiceCrewId=null;
+  renderProjectServiceBuilder();
+  updateProjectCalcs();
+  openModal("projectModal");
 }
 function duplicateProject(id){
-  const p=projects.find(x=>x.id===id); if(!p) return;
+  const p=projects.find(x=>x.id===id);
+  if(!p) return;
   const cp=JSON.parse(JSON.stringify(p));
   cp.id=uid("project");
   cp.name=`${p.name} (Copy)`;
   cp.eventPayments=[];
   cp.signatures={director:"",manager:""};
   cp.signatureRefs={director:"",manager:""};
-  cp.crew=(cp.crew||[]).map(m=>({...m,payments:[]}));
+  cp.services=(cp.services||[]).map(s=>({
+    ...s,
+    id:uid("service"),
+    crew:(s.crew||[]).map(m=>({...m,payments:[]}))
+  }));
+  // Duplicated rental payments must not follow the copy.
+  syncProjectLegacyTotals(cp);
   cp.createdAt=Date.now();
   cp.updatedAt=Date.now();
-  projects.push(cp); save(); renderProjects(); renderDashboard(); toast("Project duplicated");
+  projects.push(cp);
+  save();
+  renderProjects();
+  renderDashboard();
+  toast("Project duplicated");
 }
+
 function deleteProject(id){
   const p=projects.find(x=>x.id===id); if(!p) return;
   if(!confirm(`Delete "${p.name}"?`)) return;
@@ -625,23 +717,115 @@ function renderProjectServicePresets(){
     </button>`;
   }).join("");
 }
+function currentEditingService(serviceId){
+  return editingProjectServices.find(s=>s.id===serviceId)||null;
+}
+function editingProjectId(){
+  return document.getElementById("projectId")?.value||"";
+}
+function editingServiceRentalPaid(serviceId){
+  const pid=editingProjectId();
+  return pid?projectServiceRentalPaid(pid,serviceId):0;
+}
+function serviceDepartmentMetrics(service){
+  const revenue=Number(service?.budget||0);
+  const production=Number(service?.productionCost||0);
+  const target=Number(service?.targetProfit||0);
+  const crewAllocated=serviceCrewAllocationTotal(service);
+  const rentalIncluded=editingServiceRentalPaid(service?.id);
+  const otherProduction=Math.max(0,production-rentalIncluded);
+  const rentalOverrun=Math.max(0,rentalIncluded-production);
+  const budgetProfit=revenue-production-crewAllocated;
+  const targetDifference=budgetProfit-target;
+  const crewBudgetForTarget=revenue-production-target;
+  return {
+    revenue,production,target,crewAllocated,rentalIncluded,otherProduction,
+    rentalOverrun,budgetProfit,targetDifference,crewBudgetForTarget
+  };
+}
+function serviceCrewRowsHtml(service){
+  if(!(service.crew||[]).length){
+    return `<div class="department-empty-crew">No crew assigned to ${escapeHtml(service.name)} yet.</div>`;
+  }
+  return service.crew.map((m,i)=>`
+    <div class="department-crew-row">
+      <div>
+        <div class="project-crew-name">${escapeHtml(m.name)}</div>
+        <div class="project-crew-role">Saved crew member</div>
+      </div>
+      <input value="${escapeHtml(m.role||"")}" oninput="updateDepartmentCrewRole('${service.id}',${i},this.value)" aria-label="Role" />
+      <input type="number" min="0" step="1" inputmode="numeric" value="${Number(m.payment||0)}"
+        oninput="updateDepartmentCrewPayment('${service.id}',${i},this.value)" aria-label="Payment" />
+      <button type="button" class="remove-row" onclick="removeDepartmentCrew('${service.id}',${i})"><i data-lucide="x"></i></button>
+    </div>`).join("");
+}
 function renderProjectServiceRows(){
   const wrap=document.getElementById("projectServicesList");
   if(!wrap) return;
   if(!editingProjectServices.length){
-    wrap.innerHTML=`<div class="empty-service-budget">Select one or more project services above.</div>`;
+    wrap.innerHTML=`<div class="empty-service-budget">
+      Select Live Production, Photography, Videography, After Movie or another service to create its separate department budget.
+    </div>`;
   }else{
-    wrap.innerHTML=editingProjectServices.map((s,i)=>`
-      <div class="project-service-row">
-        <div class="service-row-icon"><i data-lucide="layers-3"></i></div>
-        <input value="${escapeHtml(s.name)}" oninput="updateProjectServiceName(${i},this.value)" aria-label="Service name" />
-        <label>
-          <span>Allocated Budget (LKR)</span>
-          <input type="number" min="0" step="1" inputmode="numeric" value="${Number(s.budget||0)}"
-            oninput="updateProjectServiceBudget(${i},this.value)" aria-label="Service budget" />
-        </label>
-        <button type="button" class="remove-row" onclick="removeProjectService(${i})"><i data-lucide="x"></i></button>
-      </div>`).join("");
+    wrap.innerHTML=editingProjectServices.map(s=>{
+      const m=serviceDepartmentMetrics(s);
+      return `
+      <section class="department-budget-card" data-service-id="${s.id}">
+        <div class="department-card-head">
+          <div class="service-row-icon"><i data-lucide="layers-3"></i></div>
+          <div class="department-title-input">
+            <span>Service / Department</span>
+            <input value="${escapeHtml(s.name)}" oninput="updateProjectServiceName('${s.id}',this.value)" />
+          </div>
+          <button type="button" class="remove-row" title="Remove department" onclick="removeProjectService('${s.id}')"><i data-lucide="trash-2"></i></button>
+        </div>
+
+        <div class="department-budget-fields">
+          <label>
+            <span>Revenue Allocation (LKR)</span>
+            <input type="number" min="0" step="1" inputmode="numeric" value="${Number(s.budget||0)}"
+              oninput="updateProjectServiceBudget('${s.id}',this.value)" />
+          </label>
+          <label>
+            <span>Production Cost (LKR)</span>
+            <input type="number" min="0" step="1" inputmode="numeric" value="${Number(s.productionCost||0)}"
+              oninput="updateProjectServiceProductionCost('${s.id}',this.value)" />
+            <small>Rental payments for this department are included inside this amount.</small>
+          </label>
+          <label>
+            <span>Target Profit (LKR)</span>
+            <input type="number" min="0" step="1" inputmode="numeric" value="${Number(s.targetProfit||0)}"
+              oninput="updateProjectServiceTargetProfit('${s.id}',this.value)" />
+          </label>
+        </div>
+
+        <div class="department-metrics">
+          <div><span>Rental Included</span><strong data-metric="rental">${money(m.rentalIncluded)}</strong></div>
+          <div><span>Other Production Cost</span><strong data-metric="other-production">${money(m.otherProduction)}</strong></div>
+          <div><span>Crew Allocated</span><strong data-metric="crew">${money(m.crewAllocated)}</strong></div>
+          <div><span>Budget Profit</span><strong data-metric="profit" class="${m.budgetProfit<0?"financial-negative":"financial-positive"}">${money(m.budgetProfit)}</strong></div>
+          <div><span>Target Profit</span><strong data-metric="target">${money(m.target)}</strong></div>
+          <div><span>Profit vs Target</span><strong data-metric="target-gap" class="${m.targetDifference<0?"financial-negative":"financial-positive"}">${money(m.targetDifference)}</strong></div>
+        </div>
+
+        <div class="department-budget-note ${m.rentalOverrun>0?"warning":""}" data-metric="note">
+          ${m.rentalOverrun>0
+            ? `Rental payments exceed this department's Production Cost by ${money(m.rentalOverrun)}. Increase Production Cost.`
+            : `Crew budget available while keeping target profit: ${money(Math.max(0,m.crewBudgetForTarget))}`}
+        </div>
+
+        <div class="department-crew-head">
+          <div>
+            <h5>${escapeHtml(s.name)} Crew</h5>
+            <p>Assign and budget crew specifically for this department.</p>
+          </div>
+          <button type="button" class="btn btn-light" onclick="openCrewPickerForService('${s.id}')">
+            <i data-lucide="user-plus"></i>Add Crew
+          </button>
+        </div>
+        <div class="department-crew-list">${serviceCrewRowsHtml(s)}</div>
+      </section>`;
+    }).join("");
   }
   renderProjectServicePresets();
   updateProjectServiceBudgetSummary();
@@ -662,8 +846,36 @@ function updateProjectServiceBudgetSummary(){
   const value=document.getElementById("serviceBudgetDifference");
   if(label) label.textContent=difference>=0?"Unallocated":"Overallocated";
   if(value){
-    value.classList.toggle("financial-negative",difference<0);
+    value.classList.toggle("financial-negative",difference!==0);
     value.classList.toggle("financial-positive",difference===0);
+  }
+}
+function updateDepartmentCardMetrics(serviceId){
+  const service=currentEditingService(serviceId);
+  const card=[...document.querySelectorAll(".department-budget-card")].find(x=>x.dataset.serviceId===serviceId);
+  if(!service||!card) return;
+  const m=serviceDepartmentMetrics(service);
+  const put=(metric,value,cls=null)=>{
+    const el=card.querySelector(`[data-metric="${metric}"]`);
+    if(!el) return;
+    el.textContent=money(value);
+    if(cls){
+      el.classList.remove("financial-positive","financial-negative");
+      el.classList.add(cls);
+    }
+  };
+  put("rental",m.rentalIncluded);
+  put("other-production",m.otherProduction);
+  put("crew",m.crewAllocated);
+  put("profit",m.budgetProfit,m.budgetProfit<0?"financial-negative":"financial-positive");
+  put("target",m.target);
+  put("target-gap",m.targetDifference,m.targetDifference<0?"financial-negative":"financial-positive");
+  const note=card.querySelector('[data-metric="note"]');
+  if(note){
+    note.classList.toggle("warning",m.rentalOverrun>0);
+    note.textContent=m.rentalOverrun>0
+      ? `Rental payments exceed this department's Production Cost by ${money(m.rentalOverrun)}. Increase Production Cost.`
+      : `Crew budget available while keeping target profit: ${money(Math.max(0,m.crewBudgetForTarget))}`;
   }
 }
 function toggleProjectServicePreset(name){
@@ -673,7 +885,14 @@ function toggleProjectServicePreset(name){
   }else{
     const revenue=Number(document.getElementById("projectRevenue")?.value||0);
     const remaining=Math.max(0,revenue-serviceBudgetsTotal(editingProjectServices));
-    editingProjectServices.push({id:uid("service"),name,budget:remaining});
+    editingProjectServices.push({
+      id:uid("service"),
+      name,
+      budget:remaining,
+      productionCost:0,
+      targetProfit:0,
+      crew:[]
+    });
   }
   renderProjectServiceRows();
   updateProjectCalcs();
@@ -683,164 +902,157 @@ function addCustomProjectService(){
   const name=String(input?.value||"").trim();
   if(!name){toast("Enter a custom service name");return;}
   if(editingProjectServices.some(s=>s.name.toLowerCase()===name.toLowerCase())){
-    toast("This service is already selected");return;
+    toast("This service is already selected");
+    return;
   }
   const revenue=Number(document.getElementById("projectRevenue")?.value||0);
   const remaining=Math.max(0,revenue-serviceBudgetsTotal(editingProjectServices));
-  editingProjectServices.push({id:uid("service"),name,budget:remaining});
+  editingProjectServices.push({
+    id:uid("service"),name,budget:remaining,productionCost:0,targetProfit:0,crew:[]
+  });
   input.value="";
   renderProjectServiceRows();
   updateProjectCalcs();
 }
-function updateProjectServiceName(i,value){
-  if(!editingProjectServices[i]) return;
-  editingProjectServices[i].name=String(value||"");
+function updateProjectServiceName(serviceId,value){
+  const s=currentEditingService(serviceId);
+  if(!s) return;
+  s.name=String(value||"");
   renderProjectServicePresets();
 }
-function updateProjectServiceBudget(i,value){
-  if(!editingProjectServices[i]) return;
-  editingProjectServices[i].budget=Math.max(0,Number(value||0));
-  updateProjectServiceBudgetSummary();
+function updateProjectServiceBudget(serviceId,value){
+  const s=currentEditingService(serviceId);
+  if(!s) return;
+  s.budget=Math.max(0,Number(value||0));
+  updateDepartmentCardMetrics(serviceId);
+  updateProjectCalcs();
 }
-function removeProjectService(i){
-  editingProjectServices.splice(i,1);
+function updateProjectServiceProductionCost(serviceId,value){
+  const s=currentEditingService(serviceId);
+  if(!s) return;
+  s.productionCost=Math.max(0,Number(value||0));
+  updateDepartmentCardMetrics(serviceId);
+  updateProjectCalcs();
+}
+function updateProjectServiceTargetProfit(serviceId,value){
+  const s=currentEditingService(serviceId);
+  if(!s) return;
+  s.targetProfit=Math.max(0,Number(value||0));
+  updateDepartmentCardMetrics(serviceId);
+  updateProjectCalcs();
+}
+function removeProjectService(serviceId){
+  const s=currentEditingService(serviceId);
+  if(!s) return;
+  if((s.crew||[]).some(m=>(m.payments||[]).length)){
+    toast("This department has saved crew payments. Remove those payments before deleting the department.");
+    return;
+  }
+  editingProjectServices=editingProjectServices.filter(x=>x.id!==serviceId);
   renderProjectServiceRows();
   updateProjectCalcs();
 }
-
-function currentEquipmentMode(){
-  return document.querySelector('input[name="equipmentMode"]:checked')?.value || "total";
+function updateDepartmentCrewRole(serviceId,index,value){
+  const s=currentEditingService(serviceId);
+  if(!s?.crew?.[index]) return;
+  s.crew[index].role=value;
 }
-function setEquipmentMode(mode){
-  const target = document.querySelector(`input[name="equipmentMode"][value="${mode}"]`);
-  if(target) target.checked=true;
-  const totalBox=document.getElementById("equipmentTotalMode");
-  const listBox=document.getElementById("equipmentItemizedMode");
-  if(totalBox) totalBox.classList.toggle("hidden",mode!=="total");
-  if(listBox) listBox.classList.toggle("hidden",mode!=="itemized");
+function updateDepartmentCrewPayment(serviceId,index,value){
+  const s=currentEditingService(serviceId);
+  if(!s?.crew?.[index]) return;
+  s.crew[index].payment=Math.max(0,Number(value||0));
+  updateDepartmentCardMetrics(serviceId);
   updateProjectCalcs();
 }
-function addEquipmentItem(){
-  editingEquipmentItems.push({id:uid("equipment"),name:"",cost:0});
-  renderEquipmentItems();
-  updateProjectCalcs();
-  setTimeout(()=>{
-    const inputs=document.querySelectorAll("#equipmentItemsList .equipment-item-name");
-    inputs[inputs.length-1]?.focus();
-  },0);
-}
-function renderEquipmentItems(){
-  const list=document.getElementById("equipmentItemsList");
-  if(!list) return;
-  if(!editingEquipmentItems.length){
-    list.innerHTML=`<div class="rounded-xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500">
-      No equipment items yet. Click <b>Add Equipment</b>.
-    </div>`;
-  }else{
-    list.innerHTML=editingEquipmentItems.map((item,i)=>`
-      <div class="equipment-item-row">
-        <input class="equipment-item-name" value="${escapeHtml(item.name||"")}" placeholder="Equipment / service name" oninput="updateEquipmentName(${i},this.value)" />
-        <input type="number" min="0" step="1" inputmode="numeric" value="${Number(item.cost||0)}" placeholder="Cost (LKR)" oninput="updateEquipmentCost(${i},this.value)" />
-        <button type="button" class="remove-row" title="Remove equipment" onclick="removeEquipmentItem(${i})"><i data-lucide="x"></i></button>
-      </div>`).join("");
-  }
-  const total=document.getElementById("equipmentItemsTotal");
-  if(total) total.textContent=money(equipmentItemsTotal(editingEquipmentItems));
-  lucide.createIcons();
-}
-function updateEquipmentName(i,v){
-  if(editingEquipmentItems[i]) editingEquipmentItems[i].name=v;
-}
-function updateEquipmentCost(i,v){
-  if(editingEquipmentItems[i]) editingEquipmentItems[i].cost=Number(v||0);
-  renderEquipmentItemsTotalOnly();
-  updateProjectCalcs();
-}
-function renderEquipmentItemsTotalOnly(){
-  const total=document.getElementById("equipmentItemsTotal");
-  if(total) total.textContent=money(equipmentItemsTotal(editingEquipmentItems));
-}
-function removeEquipmentItem(i){
-  editingEquipmentItems.splice(i,1);
-  renderEquipmentItems();
-  updateProjectCalcs();
-}
-
-function renderProjectCrewRows(){
-  const list=document.getElementById("projectCrewList");
-  if(!editingProjectCrew.length){
-    list.innerHTML=`<div class="rounded-2xl border border-dashed border-slate-300 p-5 text-center text-sm text-slate-500">
-      No crew assigned yet. Click <b>Add Crew to Project</b>.
-    </div>`;
+function removeDepartmentCrew(serviceId,index){
+  const s=currentEditingService(serviceId);
+  const member=s?.crew?.[index];
+  if(!member) return;
+  if((member.payments||[]).length){
+    toast("This crew member has recorded payments in this department and cannot be removed.");
     return;
   }
-  list.innerHTML=editingProjectCrew.map((m,i)=>`
-    <div class="project-crew-row">
-      <div>
-        <div class="project-crew-name">${escapeHtml(m.name)}</div>
-        <div class="project-crew-role">Saved crew member</div>
-      </div>
-      <input value="${escapeHtml(m.role)}" oninput="updateProjectCrewRole(${i},this.value)" aria-label="Role" />
-      <input type="number" min="0" step="1" inputmode="numeric" value="${Number(m.payment||0)}" oninput="updateProjectCrewPayment(${i},this.value)" aria-label="Payment" />
-      <button type="button" class="remove-row" onclick="removeProjectCrew(${i})"><i data-lucide="x"></i></button>
-    </div>`).join("");
+  s.crew.splice(index,1);
+  renderProjectServiceRows();
+  updateProjectCalcs();
+}
+function openCrewPickerForService(serviceId){
+  const s=currentEditingService(serviceId);
+  if(!s) return;
+  activeProjectServiceCrewId=serviceId;
+  const title=document.getElementById("crewPickerModalTitle");
+  if(title) title.textContent=`Select Crew for ${s.name}`;
+  renderCrewPickerForActiveService();
+  openModal("crewPickerModal");
   lucide.createIcons();
 }
-function updateProjectCrewRole(i,v){ editingProjectCrew[i].role=v; }
-function updateProjectCrewPayment(i,v){ editingProjectCrew[i].payment=Number(v||0); updateProjectCalcs(); }
-function removeProjectCrew(i){ editingProjectCrew.splice(i,1); renderProjectCrewRows(); updateProjectCalcs(); }
-function openCrewPicker(){
+function renderCrewPickerForActiveService(){
   const list=document.getElementById("crewPickerList");
+  const s=currentEditingService(activeProjectServiceCrewId);
+  if(!list||!s) return;
   if(!crew.length){
     list.innerHTML=emptyState("user-plus","No saved crew","Add crew members first.");
-  }else{
-    list.innerHTML=crew.map(c=>{
-      const selected=editingProjectCrew.some(x=>x.crewId===c.id);
-      return `<button type="button" class="picker-item ${selected?'selected':''}" onclick="toggleCrewForProject('${c.id}')">
-        <div class="text-left">
-          <div class="picker-name">${escapeHtml(c.name)}</div>
-          <div class="picker-role">${escapeHtml(c.role)} • ${money(c.rate)}</div>
-        </div>
-        <i data-lucide="${selected?'check-circle-2':'circle-plus'}"></i>
-      </button>`;
-    }).join("");
+    return;
   }
-  openModal("crewPickerModal"); lucide.createIcons();
+  list.innerHTML=crew.map(c=>{
+    const selected=(s.crew||[]).some(x=>x.crewId===c.id);
+    return `<button type="button" class="picker-item ${selected?"selected":""}" onclick="toggleCrewForActiveService('${c.id}')">
+      <div class="text-left">
+        <div class="picker-name">${escapeHtml(c.name)}</div>
+        <div class="picker-role">${escapeHtml(c.role)} • ${money(c.rate)}</div>
+      </div>
+      <i data-lucide="${selected?"check-circle-2":"circle-plus"}"></i>
+    </button>`;
+  }).join("");
+  lucide.createIcons();
 }
-function toggleCrewForProject(id){
-  const idx=editingProjectCrew.findIndex(x=>x.crewId===id);
-  if(idx>=0) editingProjectCrew.splice(idx,1);
-  else{
-    const c=crew.find(x=>x.id===id);
-    if(c) editingProjectCrew.push({crewId:c.id,name:c.name,role:c.role,email:c.email||"",payment:Number(c.rate||0),payments:[]});
+function toggleCrewForActiveService(crewId){
+  const s=currentEditingService(activeProjectServiceCrewId);
+  if(!s) return;
+  s.crew=s.crew||[];
+  const idx=s.crew.findIndex(x=>x.crewId===crewId);
+  if(idx>=0){
+    if((s.crew[idx].payments||[]).length){
+      toast("This crew member has saved payments in this department.");
+      return;
+    }
+    s.crew.splice(idx,1);
+  }else{
+    const c=crew.find(x=>x.id===crewId);
+    if(c){
+      s.crew.push({
+        crewId:c.id,name:c.name,role:c.role,email:c.email||"",
+        payment:Number(c.rate||0),payments:[]
+      });
+    }
   }
-  renderProjectCrewRows(); updateProjectCalcs(); openCrewPicker();
+  renderProjectServiceRows();
+  renderCrewPickerForActiveService();
+  updateProjectCalcs();
 }
 function updateProjectCalcs(){
   const revenue=Number(document.getElementById("projectRevenue")?.value||0);
-  const productionCost=currentEquipmentMode()==="itemized"
-    ? equipmentItemsTotal(editingEquipmentItems)
-    : Number(document.getElementById("projectEquipment")?.value||0);
-  const crewTotal=editingProjectCrew.reduce((s,x)=>s+Number(x.payment||0),0);
-  const editingId=document.getElementById("projectId")?.value||"";
+  const productionCost=editingProjectServices.reduce((sum,s)=>sum+Number(s.productionCost||0),0);
+  const crewTotal=editingProjectServices.reduce((sum,s)=>sum+serviceCrewAllocationTotal(s),0);
+  const targetProfit=editingProjectServices.reduce((sum,s)=>sum+Number(s.targetProfit||0),0);
+  const editingId=editingProjectId();
   const rentalPaid=editingId?projectRentalPaid(editingId):0;
-  const productionOther=Math.max(0,productionCost-rentalPaid);
-  const balance=revenue-productionCost;
-  const profit=balance-crewTotal;
-  const set=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=money(val)};
+  const profit=revenue-productionCost-crewTotal;
+  const set=(id,val)=>{const e=document.getElementById(id);if(e)e.textContent=money(val);};
+  set("calcProjectRevenue",revenue);
   set("calcProductionCost",productionCost);
   set("calcRentalIncluded",rentalPaid);
-  set("calcProductionOther",productionOther);
-  set("calcBalance",balance);
   set("calcCrew",crewTotal);
+  set("calcTargetProfit",targetProfit);
   set("calcProfit",profit);
-  renderEquipmentItemsTotalOnly();
   updateProjectServiceBudgetSummary();
+  editingProjectServices.forEach(s=>updateDepartmentCardMetrics(s.id));
   const el=document.getElementById("calcProfit");
-  if(el){el.className=profit<0?"text-red-500":"text-ffgreen";}
+  if(el){
+    el.classList.remove("text-red-500","text-ffgreen");
+    el.classList.add(profit<0?"text-red-500":"text-ffgreen");
+  }
 }
-
-
 
 function todayInputValue(){
   const d=new Date();
@@ -999,6 +1211,8 @@ function receiptRecord(data){
     type:data.type,
     projectId:data.projectId,
     projectName:data.projectName,
+    serviceId:data.serviceId||"",
+    serviceName:data.serviceName||"",
     partyName:data.partyName,
     email:normalizedEmail(data.email),
     amount:Number(data.amount||0),
@@ -1167,54 +1381,76 @@ function renderCrewPayments(){
   const p=projects.find(x=>x.id===select.value)||projects[0];
   if(p && select.value!==p.id) select.value=p.id;
   if(!p){
-    list.innerHTML=emptyState("users","No project","Create a project and assign crew first.");
-    return;
-  }
-  if(!(p.crew||[]).length){
-    list.innerHTML=emptyState("users","No assigned crew","Assign crew members to this project first.");
+    list.innerHTML=emptyState("users","No project","Create a project and assign department crew first.");
     return;
   }
 
-  list.innerHTML=p.crew.map((m,index)=>{
-    const due=Number(m.payment||0);
-    const paid=crewPaymentsTotal(m);
-    const balance=Math.max(0,due-paid);
-    const status=paymentStatus(due,paid);
-    const email=findCrewEmail(m);
-    return `<div class="crew-payment-row">
-      <div>
-        <div class="crew-payment-name">${escapeHtml(m.name)}</div>
-        <div class="crew-payment-role">${escapeHtml(m.role||"")}</div>
-        <div class="crew-payment-email">${escapeHtml(email||"No email saved")}</div>
+  normalizeProjectServices(p);
+  const departments=(p.services||[]).filter(s=>(s.crew||[]).length);
+  if(!departments.length){
+    list.innerHTML=emptyState("users","No assigned crew","Assign crew inside a Project Service / Department first.");
+    return;
+  }
+
+  list.innerHTML=departments.map(s=>`
+    <section class="crew-payment-department">
+      <div class="crew-payment-department-head">
+        <div>
+          <div class="crew-payment-department-name">${escapeHtml(s.name)}</div>
+          <div class="text-xs text-slate-400">
+            Revenue ${money(s.budget)} • Crew Allocation ${money(serviceCrewAllocationTotal(s))}
+          </div>
+        </div>
+        <span class="service-budget-pill">${(s.crew||[]).length} crew</span>
       </div>
-      <div class="crew-payment-metric"><span>Due</span><strong>${money(due)}</strong></div>
-      <div class="crew-payment-metric"><span>Paid</span><strong>${money(paid)}</strong></div>
-      <div>${statusPill(status)}</div>
-      <div class="crew-pay-action">
-        <button class="btn ${balance<=0?"btn-light":"btn-primary"}" onclick="openCrewPayment('${p.id}',${index})">
-          <i data-lucide="${balance<=0?"receipt-text":"badge-dollar-sign"}"></i>${balance<=0?"Add Payment":"Pay & Receipt"}
-        </button>
+      <div class="grid gap-3 mt-3">
+        ${(s.crew||[]).map((m,index)=>{
+          const due=Number(m.payment||0);
+          const paid=crewPaymentsTotal(m);
+          const balance=Math.max(0,due-paid);
+          const status=paymentStatus(due,paid);
+          const email=findCrewEmail(m);
+          return `<div class="crew-payment-row">
+            <div>
+              <div class="crew-payment-name">${escapeHtml(m.name)}</div>
+              <div class="crew-payment-role">${escapeHtml(m.role||"")}</div>
+              <div class="crew-payment-email">${escapeHtml(email||"No email saved")}</div>
+            </div>
+            <div class="crew-payment-metric"><span>Due</span><strong>${money(due)}</strong></div>
+            <div class="crew-payment-metric"><span>Paid</span><strong>${money(paid)}</strong></div>
+            <div>${statusPill(status)}</div>
+            <div class="crew-pay-action">
+              <button class="btn ${balance<=0?"btn-light":"btn-primary"}" onclick="openCrewPayment('${p.id}','${s.id}',${index})">
+                <i data-lucide="${balance<=0?"receipt-text":"badge-dollar-sign"}"></i>${balance<=0?"Add Payment":"Pay & Receipt"}
+              </button>
+            </div>
+          </div>`;
+        }).join("")}
       </div>
-    </div>`;
-  }).join("");
+    </section>`).join("");
   lucide.createIcons();
 }
-function openCrewPayment(projectId,index){
+function openCrewPayment(projectId,serviceId,index){
   const p=projects.find(x=>x.id===projectId);
-  const m=p?.crew?.[index];
-  if(!p||!m) return;
+  const s=(p?.services||[]).find(x=>x.id===serviceId);
+  const m=s?.crew?.[index];
+  if(!p||!s||!m) return;
+
   const due=Number(m.payment||0);
   const paid=crewPaymentsTotal(m);
   const balance=Math.max(0,due-paid);
+
   document.getElementById("crewPayProjectId").value=p.id;
+  document.getElementById("crewPayServiceId").value=s.id;
   document.getElementById("crewPayMemberIndex").value=String(index);
-  document.getElementById("crewPaymentModalTitle").textContent=`Pay ${m.name}`;
+  document.getElementById("crewPaymentModalTitle").textContent=`Pay ${m.name} — ${s.name}`;
   document.getElementById("crewPayAmount").value=balance>0?balance:due;
   document.getElementById("crewPayDate").value=todayInputValue();
   document.getElementById("crewPayMethod").value="Bank Transfer";
   document.getElementById("crewPayEmail").value=findCrewEmail(m);
   document.getElementById("crewPayNote").value="";
   document.getElementById("crewPaySummary").innerHTML=`
+    <div><span>Department</span><strong>${escapeHtml(s.name)}</strong></div>
     <div><span>Allocated</span><strong>${money(due)}</strong></div>
     <div><span>Already Paid</span><strong class="paid-value">${money(paid)}</strong></div>
     <div><span>Balance</span><strong class="${balance>0?"balance-value":"paid-value"}">${money(balance)}</strong></div>`;
@@ -1223,10 +1459,15 @@ function openCrewPayment(projectId,index){
 }
 async function saveCrewPayment(){
   const projectId=document.getElementById("crewPayProjectId").value;
+  const serviceId=document.getElementById("crewPayServiceId").value;
   const index=Number(document.getElementById("crewPayMemberIndex").value);
   const p=projects.find(x=>x.id===projectId);
-  const m=p?.crew?.[index];
-  if(!p||!m){toast("Crew payment record not found");return;}
+  const s=(p?.services||[]).find(x=>x.id===serviceId);
+  const m=s?.crew?.[index];
+  if(!p||!s||!m){
+    toast("Department crew payment record not found");
+    return;
+  }
 
   const amount=Number(document.getElementById("crewPayAmount").value||0);
   const date=document.getElementById("crewPayDate").value||todayInputValue();
@@ -1246,13 +1487,15 @@ async function saveCrewPayment(){
   const receipt=receiptRecord({
     type:"crew",
     projectId:p.id,
-    projectName:p.name,
+    projectName:`${p.name} / ${s.name}`,
+    serviceId:s.id,
+    serviceName:s.name,
     partyName:m.name,
     email,
     amount,
     date,
     method,
-    note,
+    note:note||`${s.name} crew payment`,
     status,
     totalDue:due,
     totalPaid:after,
@@ -1265,26 +1508,30 @@ async function saveCrewPayment(){
     id:uid("crewpay"),
     receiptId:receipt.id,
     receiptNo:receipt.receiptNo,
-    amount,
-    date,
-    method,
-    email,
-    note,
+    amount,date,method,email,
+    note:note||`${s.name} crew payment`,
     status,
     createdAt:Date.now()
   });
 
   const liveCrew=crew.find(c=>c.id===m.crewId);
   if(liveCrew && !liveCrew.email) liveCrew.email=email;
+
+  syncProjectLegacyTotals(p);
   p.updatedAt=Date.now();
   save();
   closeModal("crewPaymentModal");
   renderPayments();
   renderCrew();
+  renderFinancial();
+
   const result=await queueReceiptEmail(receipt);
   renderReceiptHistory();
-  toast(result.ok ? `${m.name} payment saved as ${status}. Receipt emailed.` : `Payment saved. ${result.error}`);
+  toast(result.ok
+    ? `${m.name} / ${s.name} payment saved as ${status}. Receipt emailed.`
+    : `Payment saved. ${result.error}`);
 }
+
 function renderReceiptHistory(){
   const wrap=document.getElementById("receiptHistory");
   if(!wrap) return;
@@ -1527,6 +1774,7 @@ async function saveRentalPayment(){
   const depositAmount=Number(document.getElementById("rentalDepositAmount").value||0);
   const note=document.getElementById("rentalNote").value.trim();
 
+  if(projectId && !serviceId){toast("Select the Related Service / Department for this rental");return;}
   if(!supplierName){toast("Enter rental supplier / owner name");return;}
   if(!isEmail(supplierEmail)){toast("Enter a valid supplier email");return;}
   if(!itemName){toast("Enter rented equipment / service");return;}
@@ -1769,34 +2017,52 @@ function rentalPaidForProject(projectId){
 }
 function financialProjectRows(){
   return projects.map(p=>{
-    const productionCost=equipmentTotalForProject(p);
-    const crewPaid=(p.crew||[]).reduce((sum,m)=>sum+crewPaymentsTotal(m),0);
+    normalizeProjectServices(p);
+    const productionCost=projectProductionCostTotal(p);
+    const crewAllocated=projectCrewAllocationTotal(p);
+    const crewPaid=projectCrewPaidTotal(p);
+    const targetProfit=projectTargetProfitTotal(p);
+    const contractRevenue=Number(p.revenue||0);
     const revenueReceived=eventPaymentsTotal(p);
     const rentalPaid=projectRentalPaid(p.id);
-    const productionOther=Math.max(0,productionCost-rentalPaid);
-    const rentalOverrun=Math.max(0,rentalPaid-productionCost);
-    // Rental payments are already included inside Production Cost.
-    // Do not subtract rentalPaid again.
-    const profit=revenueReceived-productionCost-crewPaid;
-    return {p,productionCost,crewPaid,revenueReceived,rentalPaid,productionOther,rentalOverrun,profit};
+    const budgetProfit=contractRevenue-productionCost-crewAllocated;
+    const cashProfit=revenueReceived-productionCost-crewPaid;
+    return {
+      p,productionCost,crewAllocated,crewPaid,targetProfit,contractRevenue,
+      revenueReceived,rentalPaid,budgetProfit,cashProfit
+    };
   });
 }
 function financialCrewTotals(){
   const map=new Map();
   for(const p of projects){
-    for(const m of (p.crew||[])){
-      const key=m.crewId||`${m.name}|${m.role}`;
-      const paid=crewPaymentsTotal(m);
-      if(!map.has(key)){
-        map.set(key,{name:m.name||"Unknown",role:m.role||"",projects:new Set(),paid:0});
+    for(const s of (p.services||[])){
+      for(const m of (s.crew||[])){
+        const key=m.crewId||`${m.name}|${m.role}`;
+        const paid=crewPaymentsTotal(m);
+        if(!map.has(key)){
+          map.set(key,{
+            name:m.name||"Unknown",
+            roles:new Set(),
+            assignments:new Set(),
+            allocated:0,
+            paid:0
+          });
+        }
+        const row=map.get(key);
+        row.allocated+=Number(m.payment||0);
+        row.paid+=paid;
+        if(m.role) row.roles.add(m.role);
+        row.assignments.add(`${p.name} / ${s.name}`);
       }
-      const row=map.get(key);
-      row.paid+=paid;
-      if(paid>0) row.projects.add(p.name);
     }
   }
   return [...map.values()]
-    .map(x=>({...x,projectCount:x.projects.size,projects:[...x.projects]}))
+    .map(x=>({
+      ...x,
+      roles:[...x.roles],
+      assignments:[...x.assignments]
+    }))
     .sort((a,b)=>b.paid-a.paid);
 }
 function renderFinancialServiceTable(){
@@ -1804,29 +2070,52 @@ function renderFinancialServiceTable(){
   if(!wrap) return;
   const rows=[];
   projects.forEach(p=>{
+    normalizeProjectServices(p);
     (p.services||[]).forEach(s=>{
+      const rentalPaid=projectServiceRentalPaid(p.id,s.id);
+      const crewAllocated=serviceCrewAllocationTotal(s);
+      const crewPaid=serviceCrewPaidTotal(s);
+      const budgetProfit=serviceBudgetProfit(s);
       rows.push({
         project:p.name,
         service:s.name,
         budget:Number(s.budget||0),
-        rentalPaid:projectServiceRentalPaid(p.id,s.id),
-        projectRevenue:Number(p.revenue||0)
+        productionCost:Number(s.productionCost||0),
+        rentalPaid,
+        otherProduction:Math.max(0,Number(s.productionCost||0)-rentalPaid),
+        crewAllocated,
+        crewPaid,
+        targetProfit:Number(s.targetProfit||0),
+        budgetProfit,
+        targetDifference:budgetProfit-Number(s.targetProfit||0)
       });
     });
   });
+
   if(!rows.length){
-    wrap.innerHTML=emptyState("layers-3","No service budgets yet","Edit a project and select its services.");
+    wrap.innerHTML=emptyState("layers-3","No department budgets yet","Edit a project and create service / department budgets.");
     return;
   }
-  wrap.innerHTML=`<table class="data-table service-financial-table">
-    <thead><tr><th>Project</th><th>Service / Department</th><th>Allocated Revenue</th><th>% of Project</th><th>Rental Paid Inside Production</th></tr></thead>
+
+  wrap.innerHTML=`<table class="data-table department-financial-table">
+    <thead><tr>
+      <th>Project</th><th>Department</th><th>Revenue</th><th>Production Cost</th>
+      <th>Rental Included</th><th>Other Production</th><th>Crew Allocated</th>
+      <th>Crew Paid</th><th>Target Profit</th><th>Budget Profit</th><th>vs Target</th>
+    </tr></thead>
     <tbody>${rows.map(r=>`
       <tr>
         <td><b class="text-ffnavy">${escapeHtml(r.project)}</b></td>
         <td><span class="service-budget-pill">${escapeHtml(r.service)}</span></td>
-        <td><b>${money(r.budget)}</b></td>
-        <td>${r.projectRevenue>0?((r.budget/r.projectRevenue)*100).toFixed(1):"0.0"}%</td>
+        <td>${money(r.budget)}</td>
+        <td>${money(r.productionCost)}</td>
         <td>${money(r.rentalPaid)}</td>
+        <td>${money(r.otherProduction)}</td>
+        <td>${money(r.crewAllocated)}</td>
+        <td>${money(r.crewPaid)}</td>
+        <td>${money(r.targetProfit)}</td>
+        <td><b class="${r.budgetProfit<0?"financial-negative":"financial-positive"}">${money(r.budgetProfit)}</b></td>
+        <td><b class="${r.targetDifference<0?"financial-negative":"financial-positive"}">${money(r.targetDifference)}</b></td>
       </tr>`).join("")}</tbody>
   </table>`;
 }
@@ -1838,47 +2127,48 @@ function renderFinancial(){
   migrateProjectServices();
 
   const rows=financialProjectRows();
-  const projectIncome=rows.reduce((s,x)=>s+x.revenueReceived,0);
+  const contractRevenue=rows.reduce((s,x)=>s+x.contractRevenue,0);
+  const incomeReceived=rows.reduce((s,x)=>s+x.revenueReceived,0);
   const productionCosts=rows.reduce((s,x)=>s+x.productionCost,0);
   const crewPaid=rows.reduce((s,x)=>s+x.crewPaid,0);
-  const rentalIncluded=rows.reduce((s,x)=>s+x.rentalPaid,0);
+  const projectCashProfit=incomeReceived-productionCosts-crewPaid;
+
   const unassignedRentalPaid=rentals
     .filter(r=>!r.projectId)
     .reduce((s,r)=>s+rentalPaymentsTotal(r),0);
-  const net=projectIncome-productionCosts-crewPaid-unassignedRentalPaid;
+  const netCashProfit=projectCashProfit-unassignedRentalPaid;
 
   const data=[
-    ["wallet",money(projectIncome),"Project Income"],
+    ["wallet",money(contractRevenue),"Contract Revenue"],
+    ["circle-dollar-sign",money(incomeReceived),"Income Received"],
     ["wrench",money(productionCosts),"Production Costs"],
-    ["package-open",money(rentalIncluded),"Rental Paid (Included)"],
     ["users",money(crewPaid),"Crew Paid"],
-    ["badge-dollar-sign",money(net),net>=0?"Net Profit":"Net Loss"]
+    ["badge-dollar-sign",money(netCashProfit),netCashProfit>=0?"Cash Profit":"Cash Loss"]
   ];
   stats.innerHTML=data.map(([icon,value,label],i)=>`
     <div class="stat-card">
       <div class="stat-top"><span class="stat-icon"><i data-lucide="${icon}"></i></span></div>
-      <div class="stat-value ${i===4?(net>=0?"financial-positive":"financial-negative"):""}">${escapeHtml(value)}</div>
+      <div class="stat-value ${i===4?(netCashProfit>=0?"financial-positive":"financial-negative"):""}">${escapeHtml(value)}</div>
       <div class="stat-label">${escapeHtml(label)}</div>
     </div>`).join("");
 
   const projectsWrap=document.getElementById("financialProjectsTable");
-  projectsWrap.innerHTML=rows.length?`<table class="data-table financial-project-v13">
+  projectsWrap.innerHTML=rows.length?`<table class="data-table financial-project-v14">
     <thead><tr>
-      <th>Project</th><th>Income Received</th><th>Production Cost</th><th>Rental Included</th>
-      <th>Other Production Cost</th><th>Crew Paid</th><th>Profit / Loss</th>
+      <th>Project</th><th>Contract Revenue</th><th>Income Received</th><th>Production Cost</th>
+      <th>Crew Allocated</th><th>Crew Paid</th><th>Target Profit</th><th>Budget Profit</th><th>Cash Profit / Loss</th>
     </tr></thead>
     <tbody>${rows.map(x=>`
       <tr>
         <td><b class="text-ffnavy">${escapeHtml(x.p.name)}</b></td>
+        <td>${money(x.contractRevenue)}</td>
         <td>${money(x.revenueReceived)}</td>
         <td>${money(x.productionCost)}</td>
-        <td>
-          ${money(x.rentalPaid)}
-          ${x.rentalOverrun>0?`<div class="text-xs financial-negative">Over production cost by ${money(x.rentalOverrun)}</div>`:""}
-        </td>
-        <td>${money(x.productionOther)}</td>
+        <td>${money(x.crewAllocated)}</td>
         <td>${money(x.crewPaid)}</td>
-        <td><b class="${x.profit>=0?"financial-positive":"financial-negative"}">${money(x.profit)}</b></td>
+        <td>${money(x.targetProfit)}</td>
+        <td><b class="${x.budgetProfit<0?"financial-negative":"financial-positive"}">${money(x.budgetProfit)}</b></td>
+        <td><b class="${x.cashProfit<0?"financial-negative":"financial-positive"}">${money(x.cashProfit)}</b></td>
       </tr>`).join("")}</tbody>
   </table>`:emptyState("folder-kanban","No project financials","Create projects and record payments first.");
 
@@ -1886,15 +2176,23 @@ function renderFinancial(){
   const totalRentalCost=rentals.reduce((s,r)=>s+Number(r.totalAmount||0),0);
   const amountPaid=rentals.reduce((s,r)=>s+rentalPaymentsTotal(r),0);
   const stillPayable=Math.max(0,totalRentalCost-amountPaid);
+  const projectAssignedRental=rentals
+    .filter(r=>r.projectId)
+    .reduce((s,r)=>s+rentalPaymentsTotal(r),0);
+  const serviceAssignedRental=rentals
+    .filter(r=>r.projectId && r.serviceId)
+    .reduce((s,r)=>s+rentalPaymentsTotal(r),0);
   const deposits=rentals.reduce((s,r)=>s+Number(r.depositAmount||0),0);
+
   rentalWrap.innerHTML=`<div class="financial-rental-card">
     <div class="financial-rental-line"><span>Total Rental Contracts</span><strong>${money(totalRentalCost)}</strong></div>
     <div class="financial-rental-line"><span>Paid to Suppliers</span><strong>${money(amountPaid)}</strong></div>
     <div class="financial-rental-line"><span>Still Payable</span><strong class="${stillPayable>0?"financial-negative":"financial-positive"}">${money(stillPayable)}</strong></div>
-    <div class="financial-rental-line"><span>Included in Project Production Cost</span><strong class="financial-positive">${money(rentalIncluded)}</strong></div>
-    <div class="financial-rental-line"><span>Unassigned Rental Payments</span><strong class="${unassignedRentalPaid>0?"financial-negative":""}">${money(unassignedRentalPaid)}</strong></div>
+    <div class="financial-rental-line"><span>Assigned to Project Departments</span><strong class="financial-positive">${money(serviceAssignedRental)}</strong></div>
+    <div class="financial-rental-line"><span>Project-linked but Department Unassigned</span><strong class="${projectAssignedRental-serviceAssignedRental>0?"financial-negative":""}">${money(projectAssignedRental-serviceAssignedRental)}</strong></div>
+    <div class="financial-rental-line"><span>General / No Project Rental Paid</span><strong class="${unassignedRentalPaid>0?"financial-negative":""}">${money(unassignedRentalPaid)}</strong></div>
     <div class="financial-rental-note">
-      Project-linked rental payments are <b>not deducted twice</b>. They are a breakdown of Total Production Cost.
+      Department-linked rental payments are already inside that department's Production Cost and are <b>not deducted again</b>.
     </div>
     <div class="financial-rental-line"><span>Refundable Security Deposits</span><strong>${money(deposits)}</strong></div>
   </div>`;
@@ -1904,15 +2202,16 @@ function renderFinancial(){
   const crewWrap=document.getElementById("financialCrewTable");
   const crewRows=financialCrewTotals();
   crewWrap.innerHTML=crewRows.length?`<table class="data-table">
-    <thead><tr><th>Crew Member</th><th>Role</th><th>Projects Paid</th><th>Total Paid</th></tr></thead>
+    <thead><tr><th>Crew Member</th><th>Role(s)</th><th>Department Assignments</th><th>Total Allocated</th><th>Total Paid</th></tr></thead>
     <tbody>${crewRows.map(c=>`
       <tr>
         <td><b class="text-ffnavy">${escapeHtml(c.name)}</b></td>
-        <td><span class="role-pill">${escapeHtml(c.role||"—")}</span></td>
-        <td><div>${c.projectCount}</div><div class="text-xs text-slate-400">${escapeHtml(c.projects.join(", "))}</div></td>
+        <td>${escapeHtml(c.roles.join(", ")||"—")}</td>
+        <td><div>${c.assignments.length}</div><div class="text-xs text-slate-400">${escapeHtml(c.assignments.join(", "))}</div></td>
+        <td><b>${money(c.allocated)}</b></td>
         <td><b>${money(c.paid)}</b></td>
       </tr>`).join("")}</tbody>
-  </table>`:emptyState("users","No crew payments yet","Crew payment totals will appear after payments are recorded.");
+  </table>`:emptyState("users","No crew payments yet","Department crew payment totals will appear here.");
   lucide.createIcons();
 }
 
@@ -2216,43 +2515,57 @@ function loadDataImage(src){
 }
 
 function reportHtml(p){
+  normalizeProjectServices(p);
   const n=projectNumbers(p);
-  const target=Number(p.targetProfit||0);
-  const budgetForCrew=n.balance-target;
-  const services=normalizeProjectServices(p);
+  const services=p.services||[];
   const serviceAllocated=serviceBudgetsTotal(services);
   const serviceUnallocated=Number(p.revenue||0)-serviceAllocated;
-  const isItemized=(p.equipmentMode||"total")==="itemized" && (p.equipmentItems||[]).length>0;
 
-  const serviceRows=services.map(s=>`
-    <tr>
-      <td><b>${escapeHtml(s.name)}</b></td>
-      <td>${Number(s.budget||0).toLocaleString("en-LK")}</td>
-    </tr>`).join("");
+  const departmentSections=services.map((s,i)=>{
+    const rentalIncluded=projectServiceRentalPaid(p.id,s.id);
+    const otherProduction=Math.max(0,Number(s.productionCost||0)-rentalIncluded);
+    const crewTotal=serviceCrewAllocationTotal(s);
+    const budgetProfit=serviceBudgetProfit(s);
+    const targetDifference=budgetProfit-Number(s.targetProfit||0);
+    const crewRows=(s.crew||[]).map(m=>`
+      <tr>
+        <td><b>${escapeHtml(m.name)}</b></td>
+        <td><span class="report-role">${escapeHtml(m.role)}</span></td>
+        <td>${Number(m.payment||0).toLocaleString("en-LK")}</td>
+      </tr>`).join("");
 
-  const equipmentRows=(p.equipmentItems||[]).map(item=>`
-    <tr>
-      <td><b>${escapeHtml(item.name||"Unnamed production item")}</b></td>
-      <td>${Number(item.cost||0).toLocaleString("en-LK")}</td>
-    </tr>`).join("");
+    return `
+      <div class="report-section-title">${i+2}. ${escapeHtml(s.name)} — Department Budget</div>
+      <table class="report-table">
+        <thead><tr><th>DESCRIPTION</th><th>AMOUNT (LKR)</th></tr></thead>
+        <tbody>
+          <tr><td>Allocated Revenue</td><td>${Number(s.budget||0).toLocaleString("en-LK")}</td></tr>
+          <tr><td>Total Production Cost <small>(includes department rentals)</small></td><td>- ${Number(s.productionCost||0).toLocaleString("en-LK")}</td></tr>
+          <tr><td>Rental Payments Included in Production Cost</td><td>${Number(rentalIncluded).toLocaleString("en-LK")}</td></tr>
+          <tr><td>Other / Remaining Production Cost</td><td>${Number(otherProduction).toLocaleString("en-LK")}</td></tr>
+          <tr><td>Crew Allocation</td><td>- ${Number(crewTotal).toLocaleString("en-LK")}</td></tr>
+          <tr><td>Target Profit</td><td>${Number(s.targetProfit||0).toLocaleString("en-LK")}</td></tr>
+          <tr class="strong-row"><td>Budget Net Profit</td><td>${money(budgetProfit)}</td></tr>
+          <tr><td>Profit vs Target</td><td>${money(targetDifference)}</td></tr>
+        </tbody>
+      </table>
 
-  const crewRows=(p.crew||[]).map(m=>`
-    <tr>
-      <td><b>${escapeHtml(m.name)}</b></td>
-      <td><span class="report-role">${escapeHtml(m.role)}</span></td>
-      <td>${Number(m.payment||0).toLocaleString("en-LK")}</td>
-    </tr>`).join("");
-
-  const serviceSectionNo=2;
-  const productionSectionNo=3;
-  const crewSectionNo=isItemized?4:3;
+      <div class="report-subsection-title">${escapeHtml(s.name)} Crew (${(s.crew||[]).length} Assignments | Total: ${money(crewTotal)})</div>
+      <table class="report-table">
+        <thead><tr><th>MEMBER NAME</th><th>ROLE / RESPONSIBILITIES</th><th>PAYMENT (LKR)</th></tr></thead>
+        <tbody>
+          ${crewRows || `<tr><td colspan="3" style="text-align:center;color:#8794a7">No crew assigned to this department.</td></tr>`}
+          <tr class="strong-row"><td colspan="2">Department Crew Total</td><td>${money(crewTotal)}</td></tr>
+        </tbody>
+      </table>`;
+  }).join("");
 
   return `
     <div class="report-header">
       <div class="copy">
         <h1>FrameFusion Studio</h1>
         <h2>${escapeHtml(p.name)}</h2>
-        <p>${escapeHtml(p.subtitle || "Official Budget Breakdown & Crew Payment Allocation")}</p>
+        <p>${escapeHtml(p.subtitle || "Official Department Budget Breakdown & Crew Payment Allocation")}</p>
       </div>
       <div class="report-logo-wrap"><img src="assets/framefusion-logo-transparent.png" alt="FrameFusion logo" /></div>
     </div>
@@ -2266,60 +2579,33 @@ function reportHtml(p){
     <div class="report-kpis">
       <div class="report-kpi"><span>Total Revenue</span><b>${money(p.revenue)}</b></div>
       <div class="report-kpi"><span>Production Cost</span><b>${money(n.equipmentTotal)}</b></div>
-      <div class="report-kpi"><span>Total Crew Pay</span><b>${money(n.crewTotal)}</b></div>
-      <div class="report-kpi profit"><span>Net Profit</span><b>${money(n.netProfit)}</b></div>
+      <div class="report-kpi"><span>Crew Allocation</span><b>${money(n.crewTotal)}</b></div>
+      <div class="report-kpi profit"><span>Budget Net Profit</span><b>${money(n.netProfit)}</b></div>
     </div>
 
-    <div class="report-section-title">1. Financial Summary & Overview</div>
+    <div class="report-section-title">1. Project Financial Summary</div>
     <table class="report-table">
       <thead><tr><th>DESCRIPTION</th><th>AMOUNT (LKR)</th></tr></thead>
       <tbody>
         <tr><td>Total Project Revenue</td><td>${Number(p.revenue||0).toLocaleString("en-LK")}</td></tr>
-        <tr><td>Total Production Cost <small>(includes rentals)</small></td><td>- ${Number(n.equipmentTotal||0).toLocaleString("en-LK")}</td></tr>
-        <tr><td>Rental Payments Included in Production Cost</td><td>${Number(n.rentalPaid||0).toLocaleString("en-LK")}</td></tr>
-        <tr><td>Other / Remaining Production Cost</td><td>${Number(n.productionOther||0).toLocaleString("en-LK")}</td></tr>
-        <tr><td><b>Balance Available for Crew & Company Profit</b></td><td><b>${n.balance.toLocaleString("en-LK")}</b></td></tr>
-        <tr><td>Target Company Profit</td><td>- ${target.toLocaleString("en-LK")}</td></tr>
-        <tr class="strong-row"><td>Total Budget Allocated for Crew Payments</td><td>${money(budgetForCrew)}</td></tr>
+        <tr><td>Revenue Allocated to Departments</td><td>${Number(serviceAllocated).toLocaleString("en-LK")}</td></tr>
+        ${serviceUnallocated!==0?`<tr><td>${serviceUnallocated>0?"Unallocated Revenue":"Overallocated Revenue"}</td><td>${money(Math.abs(serviceUnallocated))}</td></tr>`:""}
+        <tr><td>Total Production Cost</td><td>- ${Number(n.equipmentTotal).toLocaleString("en-LK")}</td></tr>
+        <tr><td>Rental Payments Included in Production Cost</td><td>${Number(n.rentalPaid).toLocaleString("en-LK")}</td></tr>
+        <tr><td>Total Crew Allocation</td><td>- ${Number(n.crewTotal).toLocaleString("en-LK")}</td></tr>
+        <tr><td>Total Target Profit</td><td>${Number(n.targetProfit).toLocaleString("en-LK")}</td></tr>
+        <tr class="strong-row"><td>Project Budget Net Profit</td><td>${money(n.netProfit)}</td></tr>
       </tbody>
     </table>
 
-    <div class="report-section-title">${serviceSectionNo}. Project Service Budget Allocation (${services.length} Services | Allocated: ${money(serviceAllocated)})</div>
-    <table class="report-table">
-      <thead><tr><th>SERVICE / DEPARTMENT</th><th>ALLOCATED REVENUE (LKR)</th></tr></thead>
-      <tbody>
-        ${serviceRows}
-        <tr class="strong-row"><td>Total Allocated to Services</td><td>${money(serviceAllocated)}</td></tr>
-        ${serviceUnallocated!==0?`<tr><td>${serviceUnallocated>0?"Unallocated Revenue":"Overallocated Amount"}</td><td>${money(Math.abs(serviceUnallocated))}</td></tr>`:""}
-      </tbody>
-    </table>
-
-    ${isItemized ? `
-      <div class="report-section-title">${productionSectionNo}. Production Cost Breakdown (${p.equipmentItems.length} Items | Total: ${money(n.equipmentTotal)})</div>
-      <table class="report-table">
-        <thead><tr><th>PRODUCTION ITEM / SERVICE</th><th>COST (LKR)</th></tr></thead>
-        <tbody>
-          ${equipmentRows}
-          <tr class="strong-row"><td>Total Production Cost</td><td>${money(n.equipmentTotal)}</td></tr>
-        </tbody>
-      </table>
-    ` : ""}
-
-    <div class="report-section-title">${crewSectionNo}. Crew Payment Breakdown (${(p.crew||[]).length} Members | Total: ${money(n.crewTotal)})</div>
-    <table class="report-table">
-      <thead><tr><th>MEMBER NAME</th><th>ROLE / RESPONSIBILITIES</th><th>PAYMENT (LKR)</th></tr></thead>
-      <tbody>
-        ${crewRows || `<tr><td colspan="3" style="text-align:center;color:#8794a7">No crew payments added.</td></tr>`}
-        <tr class="strong-row"><td colspan="2">Total Crew Payments</td><td>${money(n.crewTotal)}</td></tr>
-      </tbody>
-    </table>
+    ${departmentSections}
 
     <div class="report-signatures">
       ${signatureCardHtml(p,"director")}
       ${signatureCardHtml(p,"manager")}
     </div>
 
-    <div class="report-footer">FrameFusion Studio • ${escapeHtml(p.name)} • Budget Report • Generated by FrameFusion Budget & Crew Manager</div>
+    <div class="report-footer">FrameFusion Studio • ${escapeHtml(p.name)} • Department Budget Report • Generated by FrameFusion Budget & Crew Manager</div>
   `;
 }
 
@@ -2432,14 +2718,15 @@ function drawSectionTitle(ctx,title,W,margin,y){
 
 function drawFinancialTable(ctx,p,n,W,margin,y){
   const x=margin,w=W-margin*2;
+  const allocated=serviceBudgetsTotal(p.services||[]);
   const rows=[
     ["Total Project Revenue",Number(p.revenue||0).toLocaleString("en-LK"),false],
-    ["Total Production Cost (includes rentals)","- "+Number(n.equipmentTotal||0).toLocaleString("en-LK"),false],
+    ["Revenue Allocated to Departments",Number(allocated).toLocaleString("en-LK"),false],
+    ["Total Production Cost","- "+Number(n.equipmentTotal||0).toLocaleString("en-LK"),false],
     ["Rental Payments Included",Number(n.rentalPaid||0).toLocaleString("en-LK"),false],
-    ["Other / Remaining Production Cost",Number(n.productionOther||0).toLocaleString("en-LK"),false],
-    ["Balance Available for Crew & Company Profit",n.balance.toLocaleString("en-LK"),true],
-    ["Target Company Profit","- "+Number(p.targetProfit||0).toLocaleString("en-LK"),false],
-    ["Total Budget Allocated for Crew Payments",drawMoney(ctx,n.crewTotal),true]
+    ["Total Crew Allocation","- "+Number(n.crewTotal||0).toLocaleString("en-LK"),false],
+    ["Total Target Profit",Number(n.targetProfit||0).toLocaleString("en-LK"),false],
+    ["Project Budget Net Profit",drawMoney(ctx,n.netProfit),true]
   ];
   const headerH=58,rowH=55;
   ctx.fillStyle="#1d2c43";ctx.fillRect(x,y,w,headerH);
@@ -2449,7 +2736,7 @@ function drawFinancialTable(ctx,p,n,W,margin,y){
 
   rows.forEach((r,i)=>{
     const ry=y+headerH+i*rowH;
-    ctx.fillStyle = i===rows.length-1 ? "#eef2f8" : (i%2 ? "#f8f9fb" : "#ffffff");
+    ctx.fillStyle=i===rows.length-1?"#eef2f8":(i%2?"#f8f9fb":"#ffffff");
     ctx.fillRect(x,ry,w,rowH);
     ctx.strokeStyle="#e6ebf0";ctx.lineWidth=1;ctx.strokeRect(x,ry,w,rowH);
     ctx.fillStyle="#182235";
@@ -2461,6 +2748,86 @@ function drawFinancialTable(ctx,p,n,W,margin,y){
     ctx.textAlign="left";
   });
   return y+headerH+rows.length*rowH;
+}
+
+function drawDepartmentFinanceTable(ctx,p,s,W,margin,y){
+  const x=margin,w=W-margin*2;
+  const rental=projectServiceRentalPaid(p.id,s.id);
+  const other=Math.max(0,Number(s.productionCost||0)-rental);
+  const crewTotal=serviceCrewAllocationTotal(s);
+  const profit=serviceBudgetProfit(s);
+  const targetDiff=profit-Number(s.targetProfit||0);
+  const rows=[
+    ["Allocated Revenue",Number(s.budget||0).toLocaleString("en-LK"),false],
+    ["Production Cost (rentals included)","- "+Number(s.productionCost||0).toLocaleString("en-LK"),false],
+    ["Rental Payments Included",Number(rental).toLocaleString("en-LK"),false],
+    ["Other / Remaining Production Cost",Number(other).toLocaleString("en-LK"),false],
+    ["Crew Allocation","- "+Number(crewTotal).toLocaleString("en-LK"),false],
+    ["Target Profit",Number(s.targetProfit||0).toLocaleString("en-LK"),false],
+    ["Budget Net Profit",drawMoney(ctx,profit),true],
+    ["Profit vs Target",drawMoney(ctx,targetDiff),true]
+  ];
+  const headerH=54,rowH=51;
+  ctx.fillStyle="#1d2c43";ctx.fillRect(x,y,w,headerH);
+  ctx.fillStyle="#fff";ctx.font="800 17px Arial";
+  ctx.fillText("DEPARTMENT BUDGET",x+20,y+34);
+  ctx.fillText("AMOUNT (LKR)",x+w-300,y+34);
+
+  rows.forEach((r,i)=>{
+    const ry=y+headerH+i*rowH;
+    ctx.fillStyle=r[2]?"#eef2f8":(i%2?"#f8f9fb":"#ffffff");
+    ctx.fillRect(x,ry,w,rowH);
+    ctx.strokeStyle="#e6ebf0";ctx.lineWidth=1;ctx.strokeRect(x,ry,w,rowH);
+    ctx.fillStyle="#182235";
+    ctx.font=`${r[2]?"800":"400"} 17px Arial`;
+    ctx.fillText(r[0],x+20,ry+33);
+    ctx.textAlign="right";
+    ctx.fillText(r[1],x+w-20,ry+33);
+    ctx.textAlign="left";
+  });
+  return y+headerH+rows.length*rowH;
+}
+
+function drawDepartmentCrewTablePage(ctx,s,rows,W,margin,y,showTotal){
+  const x=margin,w=W-margin*2;
+  const col1=310,col3=230,col2=w-col1-col3;
+  const headerH=58,rowH=59;
+  ctx.fillStyle="#1d2c43";ctx.fillRect(x,y,w,headerH);
+  ctx.fillStyle="#fff";ctx.font="800 18px Arial";
+  ctx.fillText("MEMBER NAME",x+20,y+36);
+  ctx.fillText("ROLE / RESPONSIBILITIES",x+col1+20,y+36);
+  ctx.fillText("PAYMENT (LKR)",x+col1+col2+20,y+36);
+
+  rows.forEach((m,i)=>{
+    const ry=y+headerH+i*rowH;
+    ctx.fillStyle=i%2?"#f8f9fb":"#ffffff";ctx.fillRect(x,ry,w,rowH);
+    ctx.strokeStyle="#e6ebf0";ctx.strokeRect(x,ry,w,rowH);
+    ctx.fillStyle="#172033";ctx.font="800 18px Arial";
+    ctx.fillText(truncateCanvasText(ctx,m.name,col1-35),x+20,ry+37);
+
+    const role=String(m.role||"");
+    ctx.font="800 16px Arial";
+    const pillText=truncateCanvasText(ctx,role,col2-55);
+    const pillW=Math.min(ctx.measureText(pillText).width+24,col2-32);
+    roundRect(ctx,x+col1+20,ry+13,pillW,32,6,"#e5ebf2");
+    ctx.fillStyle="#45566f";
+    ctx.fillText(pillText,x+col1+32,ry+35);
+
+    ctx.textAlign="right";ctx.fillStyle="#172033";ctx.font="400 18px Arial";
+    ctx.fillText(Number(m.payment||0).toLocaleString("en-LK"),x+w-20,ry+37);
+    ctx.textAlign="left";
+  });
+
+  let endY=y+headerH+rows.length*rowH;
+  if(showTotal){
+    ctx.fillStyle="#eef2f8";ctx.fillRect(x,endY,w,rowH);
+    ctx.strokeStyle="#c9d3df";ctx.lineWidth=2;ctx.strokeRect(x,endY,w,rowH);
+    ctx.fillStyle="#172033";ctx.font="900 18px Arial";
+    ctx.fillText(`${s.name} Crew Total`,x+20,endY+37);
+    ctx.textAlign="right";ctx.fillText(drawMoney(ctx,serviceCrewAllocationTotal(s)),x+w-20,endY+37);ctx.textAlign="left";
+    endY+=rowH;
+  }
+  return endY;
 }
 
 function drawServiceBudgetTablePage(ctx,p,rows,W,margin,y,showTotal){
@@ -2637,6 +3004,7 @@ function drawFooter(ctx,p,W,margin,H){
 
 async function buildReportCanvases(p){
   const W=1240,H=1754,margin=72,bottomLimit=H-125;
+  normalizeProjectServices(p);
   const logo=await loadReportLogo().catch(()=>null);
   const signatures=projectSignatures(p);
   const [directorSignatureImg,managerSignatureImg]=await Promise.all([
@@ -2644,25 +3012,26 @@ async function buildReportCanvases(p){
     loadDataImage(signatures.manager).catch(()=>null)
   ]);
   const n=projectNumbers(p);
-  const services=normalizeProjectServices(p);
-  const equipmentRows=((p.equipmentMode||"total")==="itemized") ? (p.equipmentItems||[]) : [];
-  const allCrew=p.crew||[];
+  const services=p.services||[];
   const pages=[];
 
   function createPage(continuationTitle=null){
-    const canvas=document.createElement("canvas");canvas.width=W;canvas.height=H;
+    const canvas=document.createElement("canvas");
+    canvas.width=W;canvas.height=H;
     const ctx=canvas.getContext("2d");
     ctx.fillStyle="#f8fafc";ctx.fillRect(0,0,W,H);
     let y;
     if(!continuationTitle){
       y=drawReportHeader(ctx,p,logo,W,margin);
       y=drawKpis(ctx,p,n,W,margin,y);
-      y=drawSectionTitle(ctx,"1. Financial Summary & Overview",W,margin,y+18);
+      y=drawSectionTitle(ctx,"1. Project Financial Summary",W,margin,y+18);
       y=drawFinancialTable(ctx,p,n,W,margin,y);
     }else{
       roundRect(ctx,margin,80,W-margin*2,145,16,"#0f1b31");
-      ctx.fillStyle="#19a9e6";ctx.font="900 38px Arial";ctx.fillText("FrameFusion Studio",margin+32,137);
-      ctx.fillStyle="#fff";ctx.font="800 24px Arial";ctx.fillText(truncateCanvasText(ctx,p.name,650),margin+32,180);
+      ctx.fillStyle="#19a9e6";ctx.font="900 38px Arial";
+      ctx.fillText("FrameFusion Studio",margin+32,137);
+      ctx.fillStyle="#fff";ctx.font="800 24px Arial";
+      ctx.fillText(truncateCanvasText(ctx,p.name,650),margin+32,180);
       if(logo) drawContainedImage(ctx,logo,W-margin-280,103,220,90);
       y=255;
     }
@@ -2675,97 +3044,28 @@ async function buildReportCanvases(p){
 
   let state=createPage();
 
+  for(let si=0;si<services.length;si++){
+    const s=services[si];
+    const deptTitle=`${si+2}. ${s.name} — Department Budget`;
 
-  // Project service / department budget allocation
-  if(services.length){
-    let serviceIndex=0;
-    let firstServiceChunk=true;
-    while(serviceIndex<services.length){
-      const title=firstServiceChunk
-        ? `2. Project Service Budget Allocation (${services.length} Services | Allocated: ${drawMoney(state.ctx,serviceBudgetsTotal(services))})`
-        : "Project Service Budget Allocation - Continued";
-
-      const neededMin=68+58+55+55;
-      if(bottomLimit-state.y < neededMin){
-        finishPage(state);
-        state=createPage(title);
-        state.y=drawSectionTitle(state.ctx,title,W,margin,state.y);
-      }else{
-        state.y=drawSectionTitle(state.ctx,title,W,margin,state.y+18);
-      }
-
-      const available=bottomLimit-state.y;
-      const capacity=Math.max(1,Math.floor((available-58-55)/55));
-      const chunk=services.slice(serviceIndex,serviceIndex+capacity);
-      const isLast=serviceIndex+chunk.length>=services.length;
-      state.y=drawServiceBudgetTablePage(state.ctx,p,chunk,W,margin,state.y,isLast);
-      serviceIndex+=chunk.length;
-      firstServiceChunk=false;
-
-      if(!isLast){
-        finishPage(state);
-        state=createPage("Project Service Budget Allocation - Continued");
-      }
-    }
-  }
-
-  // Itemized production cost section
-  if(equipmentRows.length){
-    let index=0;
-    let firstEquipmentChunk=true;
-    while(index<equipmentRows.length){
-      const title = firstEquipmentChunk
-        ? `3. Production Cost Breakdown (${equipmentRows.length} Items | Total: ${drawMoney(state.ctx,n.equipmentTotal)})`
-        : "Production Cost Breakdown - Continued";
-
-      const neededMin=68+58+55+55;
-      if(bottomLimit-state.y < neededMin){
-        finishPage(state);
-        state=createPage(title);
-        state.y=drawSectionTitle(state.ctx,title,W,margin,state.y);
-      }else{
-        state.y=drawSectionTitle(state.ctx,title,W,margin,state.y+18);
-      }
-
-      const available=bottomLimit-state.y;
-      const capacity=Math.max(1,Math.floor((available-58-55)/55));
-      const chunk=equipmentRows.slice(index,index+capacity);
-      const isLast=index+chunk.length>=equipmentRows.length;
-      state.y=drawEquipmentTablePage(state.ctx,p,chunk,W,margin,state.y,isLast);
-      index+=chunk.length;
-      firstEquipmentChunk=false;
-
-      if(!isLast){
-        finishPage(state);
-        state=createPage("Production Cost Breakdown - Continued");
-      }
-    }
-  }
-
-  // Crew section
-  const crewSectionNo=equipmentRows.length?4:3;
-  let crewIndex=0;
-  let firstCrewChunk=true;
-  const crewRowsToDraw=allCrew.length ? allCrew : [null];
-
-  while(crewIndex<crewRowsToDraw.length){
-    const firstTitle=`${crewSectionNo}. Crew Payment Breakdown (${allCrew.length} Members | Total: ${drawMoney(state.ctx,n.crewTotal)})`;
-    const title=firstCrewChunk ? firstTitle : "Crew Payment Breakdown - Continued";
-    const neededMin=68+58+59+59;
-
-    if(bottomLimit-state.y < neededMin){
+    const minimumDepartmentHeight=68+54+(8*51)+85;
+    if(bottomLimit-state.y<minimumDepartmentHeight){
       finishPage(state);
-      state=createPage(title);
-      state.y=drawSectionTitle(state.ctx,title,W,margin,state.y);
-    }else{
-      state.y=drawSectionTitle(state.ctx,title,W,margin,state.y+20);
+      state=createPage(deptTitle);
     }
 
-    const available=bottomLimit-state.y;
-    const capacity=Math.max(1,Math.floor((available-58-59)/59));
+    state.y=drawSectionTitle(state.ctx,deptTitle,W,margin,state.y+22);
+    state.y=drawDepartmentFinanceTable(state.ctx,p,s,W,margin,state.y);
 
-    if(!allCrew.length){
-      // Empty crew list: draw an empty row plus total.
+    const crew=s.crew||[];
+    const crewTitle=`${s.name} Crew (${crew.length} Assignments | Total: ${drawMoney(state.ctx,serviceCrewAllocationTotal(s))})`;
+
+    if(!crew.length){
+      if(bottomLimit-state.y<190){
+        finishPage(state);
+        state=createPage(`${s.name} Crew`);
+      }
+      state.y=drawSectionTitle(state.ctx,crewTitle,W,margin,state.y+18);
       const x=margin,w=W-margin*2,headerH=58,rowH=59,y=state.y;
       const ctx=state.ctx;
       ctx.fillStyle="#1d2c43";ctx.fillRect(x,y,w,headerH);
@@ -2776,26 +3076,40 @@ async function buildReportCanvases(p){
       ctx.fillStyle="#fff";ctx.fillRect(x,y+headerH,w,rowH);
       ctx.strokeStyle="#e6ebf0";ctx.strokeRect(x,y+headerH,w,rowH);
       ctx.textAlign="center";ctx.fillStyle="#8794a7";ctx.font="400 17px Arial";
-      ctx.fillText("No crew payments added.",W/2,y+headerH+37);ctx.textAlign="left";
+      ctx.fillText("No crew assigned to this department.",W/2,y+headerH+37);
+      ctx.textAlign="left";
       state.y=y+headerH+rowH;
-      state.y=drawCrewTablePage(state.ctx,p,[],W,margin,state.y,true);
-      crewIndex=1;
+      state.y=drawDepartmentCrewTablePage(state.ctx,s,[],W,margin,state.y,true);
     }else{
-      const chunk=allCrew.slice(crewIndex,crewIndex+capacity);
-      const isLast=crewIndex+chunk.length>=allCrew.length;
-      state.y=drawCrewTablePage(state.ctx,p,chunk,W,margin,state.y,isLast);
-      crewIndex+=chunk.length;
-      if(!isLast){
-        finishPage(state);
-        state=createPage("Crew Payment Breakdown - Continued");
+      let ci=0;
+      let firstChunk=true;
+      while(ci<crew.length){
+        if(firstChunk){
+          const needed=68+58+59+59;
+          if(bottomLimit-state.y<needed){
+            finishPage(state);
+            state=createPage(`${s.name} Crew`);
+          }
+          state.y=drawSectionTitle(state.ctx,crewTitle,W,margin,state.y+18);
+        }else{
+          finishPage(state);
+          state=createPage(`${s.name} Crew — Continued`);
+          state.y=drawSectionTitle(state.ctx,`${s.name} Crew — Continued`,W,margin,state.y);
+        }
+
+        const available=bottomLimit-state.y;
+        const capacity=Math.max(1,Math.floor((available-58-59)/59));
+        const chunk=crew.slice(ci,ci+capacity);
+        const isLast=ci+chunk.length>=crew.length;
+        state.y=drawDepartmentCrewTablePage(state.ctx,s,chunk,W,margin,state.y,isLast);
+        ci+=chunk.length;
+        firstChunk=false;
       }
     }
-    firstCrewChunk=false;
   }
 
-  // Approval signatures are always placed after the financial/crew details.
   const signatureSectionHeight=285;
-  if(bottomLimit-state.y < signatureSectionHeight){
+  if(bottomLimit-state.y<signatureSectionHeight){
     finishPage(state);
     state=createPage("Approval Signatures");
     state.y=drawSectionTitle(state.ctx,"Approval Signatures",W,margin,state.y);
@@ -2803,13 +3117,7 @@ async function buildReportCanvases(p){
     state.y=drawSectionTitle(state.ctx,"Approval Signatures",W,margin,state.y+24);
   }
   state.y=drawApprovalSignatures(
-    state.ctx,
-    p,
-    directorSignatureImg,
-    managerSignatureImg,
-    W,
-    margin,
-    state.y+10
+    state.ctx,p,directorSignatureImg,managerSignatureImg,W,margin,state.y+10
   );
 
   finishPage(state);
@@ -2983,18 +3291,44 @@ document.addEventListener("DOMContentLoaded",()=>{
 
   document.getElementById("projectForm").addEventListener("submit",(e)=>{
     e.preventDefault();
+
     const id=document.getElementById("projectId").value;
     const old=id?projects.find(x=>x.id===id):null;
     const projectRevenue=Number(document.getElementById("projectRevenue").value||0);
+
     const cleanServices=editingProjectServices
-      .map(s=>({id:s.id||uid("service"),name:String(s.name||"").trim(),budget:Math.max(0,Number(s.budget||0))}))
+      .map(s=>({
+        id:s.id||uid("service"),
+        name:String(s.name||"").trim(),
+        budget:Math.max(0,Number(s.budget||0)),
+        productionCost:Math.max(0,Number(s.productionCost||0)),
+        targetProfit:Math.max(0,Number(s.targetProfit||0)),
+        crew:normalizeDepartmentCrew(s.crew)
+      }))
       .filter(s=>s.name);
-    if(!cleanServices.length){toast("Select at least one Project Service / Department");return;}
-    const allocatedRevenue=serviceBudgetsTotal(cleanServices);
-    if(allocatedRevenue>projectRevenue){
-      toast(`Service budgets exceed project revenue by ${money(allocatedRevenue-projectRevenue)}`);
+
+    if(!cleanServices.length){
+      toast("Select at least one Project Service / Department");
       return;
     }
+
+    const allocatedRevenue=serviceBudgetsTotal(cleanServices);
+    if(allocatedRevenue!==projectRevenue){
+      const diff=projectRevenue-allocatedRevenue;
+      toast(diff>0
+        ? `Allocate the remaining ${money(diff)} to a department`
+        : `Department revenue exceeds project revenue by ${money(Math.abs(diff))}`);
+      return;
+    }
+
+    for(const s of cleanServices){
+      const rentalPaid=id?projectServiceRentalPaid(id,s.id):0;
+      if(rentalPaid>Number(s.productionCost||0)){
+        toast(`${s.name}: Production Cost must be at least ${money(rentalPaid)} because rentals are already included.`);
+        return;
+      }
+    }
+
     const p={
       id:id||uid("project"),
       name:document.getElementById("projectName").value.trim(),
@@ -3004,36 +3338,44 @@ document.addEventListener("DOMContentLoaded",()=>{
       location:document.getElementById("projectLocation").value.trim(),
       revenue:projectRevenue,
       services:JSON.parse(JSON.stringify(cleanServices)),
-      equipmentMode:currentEquipmentMode(),
-      equipmentItems:currentEquipmentMode()==="itemized"
-        ? JSON.parse(JSON.stringify(editingEquipmentItems.filter(item=>item.name.trim() || Number(item.cost||0)>0)))
-        : [],
-      equipment:currentEquipmentMode()==="itemized"
-        ? equipmentItemsTotal(editingEquipmentItems)
-        : Number(document.getElementById("projectEquipment").value||0),
-      targetProfit:Number(document.getElementById("projectTargetProfit").value||0),
       subtitle:document.getElementById("projectSubtitle").value.trim(),
       directorName:document.getElementById("projectDirectorName").value.trim(),
       managerName:document.getElementById("projectManagerName").value.trim(),
       signatures:JSON.parse(JSON.stringify(old?.signatures||{director:"",manager:""})),
       signatureRefs:JSON.parse(JSON.stringify(old?.signatureRefs||{director:"",manager:""})),
       eventPayments:JSON.parse(JSON.stringify(old?.eventPayments||[])),
-      crew:JSON.parse(JSON.stringify(editingProjectCrew)),
       createdAt:old?.createdAt||Date.now(),
-      updatedAt:Date.now()
+      updatedAt:Date.now(),
+      departmentBudgetVersion:14
     };
-    if(id){const i=projects.findIndex(x=>x.id===id);if(i>=0)projects[i]=p;} else projects.push(p);
-    save();closeModal("projectModal");renderProjects();renderDashboard();setView("projects");toast(id?"Project updated":"Project created");
+
+    syncProjectLegacyTotals(p);
+
+    if(id){
+      const i=projects.findIndex(x=>x.id===id);
+      if(i>=0) projects[i]=p;
+    }else{
+      projects.push(p);
+    }
+
+    save();
+    closeModal("projectModal");
+    renderProjects();
+    renderDashboard();
+    renderPayments();
+    renderFinancial();
+    setView("projects");
+    toast(id?"Project departments updated":"Project created");
   });
 
-  ["projectRevenue","projectEquipment"].forEach(id=>document.getElementById(id).addEventListener("input",updateProjectCalcs));
+  document.getElementById("projectRevenue")?.addEventListener("input",updateProjectCalcs);
   document.getElementById("addCustomProjectServiceBtn")?.addEventListener("click",addCustomProjectService);
   document.getElementById("customProjectServiceName")?.addEventListener("keydown",e=>{
-    if(e.key==="Enter"){e.preventDefault();addCustomProjectService();}
+    if(e.key==="Enter"){
+      e.preventDefault();
+      addCustomProjectService();
+    }
   });
-  document.querySelectorAll('input[name="equipmentMode"]').forEach(input=>input.addEventListener("change",()=>setEquipmentMode(input.value)));
-  document.getElementById("addEquipmentItemBtn").addEventListener("click",addEquipmentItem);
-  document.getElementById("addCrewToProjectBtn").addEventListener("click",openCrewPicker);
 
   document.getElementById("downloadReportBtn").addEventListener("click",downloadActiveReport);
   document.getElementById("printReportBtn").addEventListener("click",()=>window.print());
@@ -3088,7 +3430,14 @@ window.deleteProject=deleteProject;
 window.toggleProjectServicePreset=toggleProjectServicePreset;
 window.updateProjectServiceName=updateProjectServiceName;
 window.updateProjectServiceBudget=updateProjectServiceBudget;
+window.updateProjectServiceProductionCost=updateProjectServiceProductionCost;
+window.updateProjectServiceTargetProfit=updateProjectServiceTargetProfit;
 window.removeProjectService=removeProjectService;
+window.openCrewPickerForService=openCrewPickerForService;
+window.toggleCrewForActiveService=toggleCrewForActiveService;
+window.updateDepartmentCrewRole=updateDepartmentCrewRole;
+window.updateDepartmentCrewPayment=updateDepartmentCrewPayment;
+window.removeDepartmentCrew=removeDepartmentCrew;
 window.openRentalBalancePayment=openRentalBalancePayment;
 window.resendRentalReceipt=resendRentalReceipt;
 window.deleteRental=deleteRental;
@@ -3098,10 +3447,3 @@ window.openCrewPayment=openCrewPayment;
 window.resendReceipt=resendReceipt;
 window.openSignaturePad=openSignaturePad;
 window.useSelectedSignature=useSelectedSignature;
-window.updateEquipmentName=updateEquipmentName;
-window.updateEquipmentCost=updateEquipmentCost;
-window.removeEquipmentItem=removeEquipmentItem;
-window.toggleCrewForProject=toggleCrewForProject;
-window.updateProjectCrewRole=updateProjectCrewRole;
-window.updateProjectCrewPayment=updateProjectCrewPayment;
-window.removeProjectCrew=removeProjectCrew;
