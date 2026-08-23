@@ -1646,3 +1646,16 @@ body.signature-open{
 body[data-user-role="accountant"] .manager-action{
   display:none!important;
 }
+
+
+/* v17 — Username + Password only */
+#loginUsername,
+#userUsername,
+#bootstrapUsername{
+  text-transform:lowercase;
+}
+.username-hint{
+  color:#8390a3;
+  font-size:9px;
+  line-height:1.45;
+}

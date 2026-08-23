@@ -1,120 +1,103 @@
-# FrameFusion Crew v16 — Management Login + Project Tasks
+# FrameFusion Crew v17 — Username + Password Login
 
-## Who can log in?
+## Login credentials
 
-This version is **management-only**.
+Users see only:
 
-Allowed roles:
+- Username
+- Password
+
+No email address is required or shown in the app.
+
+Firebase Authentication internally still requires an email-shaped identifier, so the
+app automatically converts a username like:
+
+`director01`
+
+to an internal Firebase Auth identifier like:
+
+`director01@framefusion.local`
+
+This internal value is not shown to the user and is only used by Firebase Auth.
+
+## Allowed app users
+
+Management only:
 - Admin
 - Director
 - Manager
 - Accountant
 
-Crew members remain in the Crew database and can still be assigned to projects,
-departments and checklist tasks, but **Crew members do not receive app logins**.
+Crew Members do not receive app logins.
 
-## 1. Enable Firebase Email/Password Authentication
-
-Firebase Console:
-1. Open the `ffcrew` project.
-2. Open **Authentication**.
-3. Click **Get started** if shown.
-4. Open **Sign-in method**.
-5. Enable **Email/Password**.
-6. Save.
-
-## 2. Create the first Admin Firebase Auth user
+## 1. Enable Firebase Authentication
 
 Firebase Console:
-1. Authentication → Users
-2. Add user
-3. Enter the first management/admin email
-4. Create a strong password
+1. Open project `ffcrew`
+2. Authentication
+3. Sign-in method
+4. Enable **Email/Password**
 
-Do not put passwords in the website source code.
+Although Firebase calls the provider Email/Password, FrameFusion presents it as
+Username + Password and generates the internal identifier automatically.
 
-## 3. Temporary first-admin Firestore rules
+## 2. First Admin setup — recommended
 
-Publish:
+For a brand-new first Admin in Firebase Console, create the Firebase Auth user with:
+
+- Email: `admin@framefusion.local`
+- Password: your chosen password
+
+Then in FrameFusion Crew login with:
+
+- Username: `admin`
+- Password: the same password
+
+If the Admin profile does not yet exist, the app shows First Admin Setup.
+Enter `admin` as the Admin Username and create the profile.
+
+## Existing v16 Admin
+
+If the browser is still signed in after upgrading to v17, the app attempts to migrate
+the existing management profile to a username based on the old email's part before `@`.
+
+Example:
+`management.framefusion@gmail.com` → username `management.framefusion`
+
+For maximum reliability, keep the existing session signed in while deploying v17.
+
+## 3. Temporary first-admin rules
+
+Only if you are still creating the first Admin profile, publish:
 
 `FIRESTORE_RULES_FIRST_ADMIN_SETUP_ONLY.txt`
 
-Use these rules only for the first Admin bootstrap.
+Then create the Admin profile.
 
-## 4. Create the Admin profile
+## 4. Secure rules
 
-1. Open FrameFusion Crew.
-2. Sign in with the first Firebase Auth account.
-3. Press **Create Admin Profile**.
-4. Wait for confirmation.
-
-## 5. Immediately publish secure rules
-
-Replace the temporary rules with:
+Immediately after the Admin profile exists, publish:
 
 `FIRESTORE_RULES_SECURE_AUTH.txt`
 
-and press Publish.
+## 5. Create management usernames
 
-The secure rules reject profiles that are not one of:
-`admin`, `director`, `manager`, `accountant`.
+Admin → Users → Create User
 
-## 6. Create management users
+Enter:
+- Username
+- Password
+- Role
+- Optional linked Crew Record
 
-Admin → **Users** → **Create User**
+No email is entered.
 
-Available roles:
-- Admin
-- Director
-- Manager
-- Accountant
+## Password recovery
 
-There is no Crew login role.
+There is no Forgot Password email flow in v17 because the system uses username-only
+credentials.
 
-## Role access
+If a management user forgets a password, an Admin can handle the account through the
+Firebase Console, or create a replacement management username and disable the old one.
 
-### Admin
-Full access, including Users & Roles.
-
-### Director
-Projects, crew, department budgets, tasks, payments, rentals, financial and backup.
-
-### Manager
-Projects, crew, department budgets, tasks, payments, rentals, financial and backup.
-
-### Accountant
-Dashboard, tasks (view), payments, rentals and financial.
-
-Only Admin / Director / Manager can create, edit, complete or delete Project Tasks.
-
-## Project Task Checklist
-
-Tasks are assigned to Crew Members for operational tracking, but the Crew Member
-does not need to log in. Management marks tasks Pending / In Progress / Done.
-
-The task record stores:
-- Project
-- Service / Department
-- Assigned Crew Member
-- Due date
-- Priority
-- Status
-- Notes
-
-Tasks are stored in Firestore collection:
-
-`framefusion_tasks`
-
-## Checklist generator
-
-Project Tasks → select a project → **Generate Checklist**
-
-Preset checklists are included for:
-- Live Production
-- Photography
-- Videography
-- After Movie
-- Live Streaming
-- Highlights / Social Media
-
-Custom departments receive a generic checklist.
+Passwords are never stored in Firestore, localStorage, or the website source code.

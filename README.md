@@ -398,3 +398,17 @@ See `AUTH_TASKS_SETUP.md` for exact steps.
 - Accountant can view tasks but cannot change operational checklist status.
 - Secure Firestore rules reject unsupported roles such as legacy `crew` profiles.
 - Existing old Crew Auth profiles, if any, are blocked by the app and secure rules.
+
+
+## v17 — Username + Password Only
+
+- Removed email fields from the login screen.
+- Removed email fields from Admin → Create User.
+- Removed Forgot Password email flow.
+- Removed password-reset email buttons from Users.
+- Login now uses only **Username + Password**.
+- Usernames are converted internally to Firebase Auth identifiers using
+  `username@framefusion.local`.
+- Firestore user profiles store `username`, role, active status and optional linked Crew record.
+- Passwords are never stored in Firestore or localStorage.
+- Existing management profiles without a username are migrated when possible while signed in.

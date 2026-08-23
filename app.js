@@ -4,8 +4,8 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
-  sendPasswordResetEmail,
-  createUserWithEmailAndPassword
+  createUserWithEmailAndPassword,
+  updateEmail
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 import {
   getFirestore,
@@ -159,6 +159,28 @@ function saveLocalCache(){
   localStorage.setItem(STORAGE_KEYS.tasks, JSON.stringify(tasks));
 }
 
+
+const AUTH_USERNAME_DOMAIN = "framefusion.local";
+
+function normalizeUsername(value){
+  return String(value||"")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g,"")
+    .replace(/[^a-z0-9._-]/g,"");
+}
+function isValidUsername(value){
+  const u=normalizeUsername(value);
+  return u.length>=3 && u.length<=32 && /^[a-z0-9][a-z0-9._-]*$/.test(u);
+}
+function authEmailFromUsername(username){
+  return `${normalizeUsername(username)}@${AUTH_USERNAME_DOMAIN}`;
+}
+function usernameFromAuthEmail(email){
+  const e=String(email||"").trim().toLowerCase();
+  if(e.endsWith(`@${AUTH_USERNAME_DOMAIN}`)) return e.slice(0,-(`@${AUTH_USERNAME_DOMAIN}`.length));
+  return normalizeUsername(e.split("@")[0]||"admin") || "admin";
+}
 function roleName(role){
   return ({admin:"Admin",director:"Director",manager:"Manager",accountant:"Accountant"})[role]||"User";
 }
@@ -223,7 +245,7 @@ function applyRoleAccess(){
 
   const topName=document.getElementById("topUserName");
   const topRole=document.getElementById("topUserRole");
-  if(topName) topName.textContent=currentUserProfile?.displayName||currentAuthUser?.email||"User";
+  if(topName) topName.textContent=currentUserProfile?.username||currentUserProfile?.displayName||usernameFromAuthEmail(currentAuthUser?.email)||"User";
   if(topRole) topRole.textContent=roleName(userRole());
 
   document.body.dataset.userRole=userRole();
@@ -251,8 +273,11 @@ function showBootstrapGate(user){
   document.getElementById("appShell")?.classList.add("hidden");
   document.getElementById("loginPanel")?.classList.add("hidden");
   document.getElementById("bootstrapPanel")?.classList.remove("hidden");
+  const suggested=usernameFromAuthEmail(user.email||"");
   const box=document.getElementById("bootstrapIdentity");
-  if(box) box.innerHTML=`<b>${escapeHtml(user.email||"")}</b><small>Firebase UID: ${escapeHtml(user.uid)}</small>`;
+  if(box) box.innerHTML=`<b>Management Account</b><small>Firebase UID: ${escapeHtml(user.uid)}</small>`;
+  const usernameInput=document.getElementById("bootstrapUsername");
+  if(usernameInput && !usernameInput.value) usernameInput.value=suggested;
   lucide.createIcons();
 }
 function showAuthenticatedApp(){
@@ -268,11 +293,17 @@ async function loadCurrentUserProfile(user){
 }
 async function bootstrapAdminProfile(){
   if(!currentAuthUser) return;
+  const username=normalizeUsername(document.getElementById("bootstrapUsername")?.value||"admin");
+  if(!isValidUsername(username)){
+    showAuthMessage("Username must be 3–32 characters using letters, numbers, dot, dash or underscore.","error");
+    return;
+  }
+  const authEmail=authEmailFromUsername(username);
   const profile={
     id:currentAuthUser.uid,
     uid:currentAuthUser.uid,
-    email:currentAuthUser.email||"",
-    displayName:"FrameFusion Admin",
+    username,
+    displayName:username,
     role:"admin",
     crewId:"",
     active:true,
@@ -280,18 +311,48 @@ async function bootstrapAdminProfile(){
     updatedAt:Date.now()
   };
   try{
+    // Convert a freshly signed-in legacy/first Firebase account to the internal
+    // synthetic auth email so future sign-ins require only Username + Password.
+    if(String(currentAuthUser.email||"").toLowerCase()!==authEmail){
+      await updateEmail(currentAuthUser,authEmail);
+    }
     const payload={...profile};
     delete payload.id;
     await setDoc(doc(db,CLOUD_COLLECTIONS.users,currentAuthUser.uid),payload);
     currentUserProfile=profile;
-    toast("Admin profile created");
+    toast("Admin username profile created");
     showAuthenticatedApp();
     await initializeFirestoreData();
   }catch(error){
     console.error(error);
-    showAuthMessage("Admin profile could not be created. Keep the old setup rules active for this first bootstrap, then publish the secure v15 rules.","error");
+    const msg=error?.code==="auth/email-already-in-use"
+      ? "That username is already in use."
+      : "Admin profile could not be created. Keep the temporary setup rules active and try again.";
+    showAuthMessage(msg,"error");
   }
 }
+
+async function migrateLegacyManagementUsername(user,profile){
+  if(!user||!profile||profile.username) return profile;
+  const username=usernameFromAuthEmail(user.email||"");
+  if(!isValidUsername(username)) return profile;
+  const migrated={...profile,username,displayName:profile.displayName||username,updatedAt:Date.now()};
+  try{
+    const targetEmail=authEmailFromUsername(username);
+    if(String(user.email||"").toLowerCase()!==targetEmail){
+      await updateEmail(user,targetEmail);
+    }
+    const payload=cleanForFirestore(migrated);
+    delete payload.id;
+    await setDoc(doc(db,CLOUD_COLLECTIONS.users,user.uid),payload);
+    return migrated;
+  }catch(error){
+    console.warn("Legacy username migration skipped:",error);
+    // Current session still works; Admin can create another username account if needed.
+    return migrated;
+  }
+}
+
 async function handleAuthUser(user){
   currentAuthUser=user||null;
   currentUserProfile=null;
@@ -301,7 +362,7 @@ async function handleAuthUser(user){
     return;
   }
   try{
-    const profile=await loadCurrentUserProfile(user);
+    let profile=await loadCurrentUserProfile(user);
     if(!profile){
       showBootstrapGate(user);
       return;
@@ -316,6 +377,7 @@ async function handleAuthUser(user){
       await signOut(auth);
       return;
     }
+    profile=await migrateLegacyManagementUsername(user,profile);
     currentUserProfile=profile;
     showAuthenticatedApp();
     await initializeFirestoreData();
@@ -330,30 +392,22 @@ async function handleAuthUser(user){
 function initAuth(){
   onAuthStateChanged(auth,handleAuthUser);
 }
-async function loginUser(email,password){
+async function loginUser(username,password){
+  const clean=normalizeUsername(username);
+  if(!isValidUsername(clean)){
+    showAuthMessage("Enter a valid username.","error");
+    return;
+  }
   showAuthMessage("Signing in…");
   try{
-    await signInWithEmailAndPassword(auth,email,password);
+    await signInWithEmailAndPassword(auth,authEmailFromUsername(clean),password);
     showAuthMessage("");
   }catch(error){
     console.error(error);
-    showAuthMessage("Sign in failed. Check the email/password and Firebase Authentication setup.","error");
+    showAuthMessage("Sign in failed. Check the username and password.","error");
   }
 }
-async function requestPasswordReset(){
-  const email=String(document.getElementById("loginEmail")?.value||"").trim();
-  if(!email){
-    showAuthMessage("Enter your email address first.","error");
-    return;
-  }
-  try{
-    await sendPasswordResetEmail(auth,email);
-    showAuthMessage("Password reset email sent.","success");
-  }catch(error){
-    console.error(error);
-    showAuthMessage("Could not send password reset email.","error");
-  }
-}
+
 function cloudSyncAllowed(){
   return isFinance();
 }
@@ -2865,23 +2919,21 @@ function renderUsers(){
     return;
   }
   if(!userProfiles.length){
-    wrap.innerHTML=emptyState("user-plus","No user profiles","Create the first staff login.");
+    wrap.innerHTML=emptyState("user-plus","No user profiles","Create the first management username.");
     lucide.createIcons();
     return;
   }
   wrap.innerHTML=`<table class="data-table">
-    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Linked Crew</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead>
-    <tbody>${userProfiles.sort((a,b)=>(a.displayName||"").localeCompare(b.displayName||"")).map(u=>{
+    <thead><tr><th>Username</th><th>Role</th><th>Linked Crew</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead>
+    <tbody>${userProfiles.sort((a,b)=>(a.username||a.displayName||"").localeCompare(b.username||b.displayName||"")).map(u=>{
       const linked=crew.find(c=>c.id===u.crewId);
       const self=u.id===currentAuthUser?.uid;
       return `<tr>
-        <td><b class="text-ffnavy">${escapeHtml(u.displayName||"User")}</b>${self?` <span class="you-pill">YOU</span>`:""}</td>
-        <td>${escapeHtml(u.email||"")}</td>
-        <td><span class="role-access-pill role-${escapeHtml(u.role||"crew")}">${escapeHtml(roleName(u.role))}</span></td>
+        <td><b class="text-ffnavy">${escapeHtml(u.username||u.displayName||"User")}</b>${self?` <span class="you-pill">YOU</span>`:""}</td>
+        <td><span class="role-access-pill role-${escapeHtml(u.role||"manager")}">${escapeHtml(roleName(u.role))}</span></td>
         <td>${escapeHtml(linked?.name||"—")}</td>
         <td><span class="status-pill ${u.active===false?"unpaid":"paid"}">${u.active===false?"DISABLED":"ACTIVE"}</span></td>
         <td><div class="flex justify-end gap-2">
-          <button class="icon-mini" title="Send Password Reset" onclick="sendUserPasswordReset('${escapeHtml(u.email||"")}')"><i data-lucide="key-round"></i></button>
           ${!self?`<button class="btn btn-compact ${u.active===false?"btn-primary":"btn-light"}" onclick="toggleUserActive('${u.id}',${u.active===false?"true":"false"})">${u.active===false?"Enable":"Disable"}</button>`:""}
         </div></td>
       </tr>`;
@@ -2905,29 +2957,50 @@ function getSecondaryUserAuth(){
 }
 async function createStaffUser(){
   if(!requirePermission(isAdmin(),"Admin access required.")) return;
-  const displayName=document.getElementById("userDisplayName").value.trim();
-  const email=document.getElementById("userEmail").value.trim().toLowerCase();
+  const username=normalizeUsername(document.getElementById("userUsername").value);
   const password=document.getElementById("userPassword").value;
   const role=document.getElementById("userRole").value;
   const crewId=document.getElementById("userCrewId").value||"";
   const allowedRoles=["admin","director","manager","accountant"];
-  if(!displayName||!email||password.length<6){toast("Complete the user details");return;}
-  if(!allowedRoles.includes(role)){toast("Only management roles can receive app logins");return;}
+
+  if(!isValidUsername(username)){
+    toast("Username must be 3–32 characters");
+    return;
+  }
+  if(password.length<6){
+    toast("Password must contain at least 6 characters");
+    return;
+  }
+  if(!allowedRoles.includes(role)){
+    toast("Only management roles can receive app logins");
+    return;
+  }
+
+  const authEmail=authEmailFromUsername(username);
   try{
     const secAuth=getSecondaryUserAuth();
-    const cred=await createUserWithEmailAndPassword(secAuth,email,password);
+    const cred=await createUserWithEmailAndPassword(secAuth,authEmail,password);
     const uidValue=cred.user.uid;
     await setDoc(doc(db,CLOUD_COLLECTIONS.users,uidValue),{
-      uid:uidValue,email,displayName,role,crewId,active:true,
-      createdAt:Date.now(),updatedAt:Date.now(),createdBy:currentAuthUser?.uid||""
+      uid:uidValue,
+      username,
+      displayName:username,
+      role,
+      crewId,
+      active:true,
+      createdAt:Date.now(),
+      updatedAt:Date.now(),
+      createdBy:currentAuthUser?.uid||""
     });
     await signOut(secAuth);
     closeModal("userModal");
     await loadUserProfiles();
-    toast("User login created");
+    toast(`Username "${username}" created`);
   }catch(error){
     console.error(error);
-    toast(error?.code==="auth/email-already-in-use"?"That email already has a Firebase login.":"User account could not be created");
+    toast(error?.code==="auth/email-already-in-use"
+      ?"That username is already in use."
+      :"User account could not be created");
   }
 }
 async function toggleUserActive(uidValue,active){
@@ -2944,17 +3017,6 @@ async function toggleUserActive(uidValue,active){
     console.error(error);toast("User status update failed");
   }
 }
-async function sendUserPasswordReset(email){
-  if(!requirePermission(isAdmin())) return;
-  try{
-    await sendPasswordResetEmail(auth,email);
-    toast("Password reset email sent");
-  }catch(error){
-    console.error(error);toast("Could not send reset email");
-  }
-}
-
-
 function projectSignatures(p){
   const s=p?.signatures||{};
   return {
@@ -4002,11 +4064,10 @@ document.addEventListener("DOMContentLoaded",()=>{
   document.getElementById("loginForm")?.addEventListener("submit",e=>{
     e.preventDefault();
     loginUser(
-      document.getElementById("loginEmail").value.trim(),
+      document.getElementById("loginUsername").value.trim(),
       document.getElementById("loginPassword").value
     );
   });
-  document.getElementById("forgotPasswordBtn")?.addEventListener("click",requestPasswordReset);
   document.getElementById("bootstrapAdminBtn")?.addEventListener("click",bootstrapAdminProfile);
   document.getElementById("bootstrapSignOutBtn")?.addEventListener("click",()=>signOut(auth));
   document.getElementById("signOutBtn")?.addEventListener("click",()=>signOut(auth));
@@ -4207,7 +4268,6 @@ window.editTask=editTask;
 window.setTaskStatus=setTaskStatus;
 window.deleteTaskItem=deleteTaskItem;
 window.toggleUserActive=toggleUserActive;
-window.sendUserPasswordReset=sendUserPasswordReset;
 window.editCrew=editCrew;
 window.deleteCrew=deleteCrew;
 window.editProject=editProject;

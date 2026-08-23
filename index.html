@@ -49,8 +49,9 @@
 
         <form id="loginForm" class="auth-form">
           <label class="field">
-            <span>Email Address</span>
-            <input id="loginEmail" type="email" autocomplete="username" required placeholder="you@framefusion.lk" />
+            <span>Username</span>
+            <input id="loginUsername" type="text" autocomplete="username" required
+              autocapitalize="none" spellcheck="false" placeholder="e.g. admin" />
           </label>
           <label class="field">
             <span>Password</span>
@@ -61,7 +62,6 @@
           </button>
         </form>
 
-        <button id="forgotPasswordBtn" type="button" class="auth-link-btn">Forgot password?</button>
         <div id="authMessage" class="auth-message"></div>
       </div>
 
@@ -70,6 +70,10 @@
         <h2>First Admin Setup</h2>
         <p class="auth-copy">Authentication succeeded, but this account does not have a FrameFusion user profile yet.</p>
         <div id="bootstrapIdentity" class="auth-identity-box"></div>
+        <label class="field mt-4">
+          <span>Admin Username</span>
+          <input id="bootstrapUsername" type="text" required autocapitalize="none" spellcheck="false" placeholder="admin" />
+        </label>
         <button id="bootstrapAdminBtn" type="button" class="btn btn-primary auth-main-btn">
           <i data-lucide="user-cog"></i>Create Admin Profile
         </button>
@@ -611,7 +615,7 @@
             <div class="panel-head">
               <div>
                 <h3>User Login & Roles</h3>
-                <p>Create management logins and control access by leadership role. Crew members do not receive app logins.</p>
+                <p>Create management usernames and passwords, then control access by leadership role. Crew members do not receive app logins.</p>
               </div>
               <button id="newUserBtn" class="btn btn-primary">
                 <i data-lucide="user-plus"></i>Create User
@@ -975,17 +979,13 @@
 
       <form id="userForm" class="grid md:grid-cols-2 gap-4 mt-5">
         <label class="field md:col-span-2">
-          <span>Display Name *</span>
-          <input id="userDisplayName" required placeholder="Staff member name" />
-        </label>
-
-        <label class="field md:col-span-2">
-          <span>Email *</span>
-          <input id="userEmail" type="email" required placeholder="staff@example.com" />
+          <span>Username *</span>
+          <input id="userUsername" required autocapitalize="none" spellcheck="false"
+            placeholder="e.g. director01" />
         </label>
 
         <label class="field">
-          <span>Temporary Password *</span>
+          <span>Password *</span>
           <input id="userPassword" type="password" minlength="6" required placeholder="Minimum 6 characters" />
         </label>
 
@@ -1000,14 +1000,14 @@
         </label>
 
         <label class="field md:col-span-2">
-          <span>Optional Linked Crew Record</span>
+          <span>Linked Crew Record <small>(optional)</small></span>
           <select id="userCrewId">
             <option value="">Not linked</option>
           </select>
         </label>
 
         <div class="md:col-span-2 rounded-xl bg-sky-50 border border-sky-100 p-3 text-xs text-sky-800">
-          The password is used only to create the Firebase Auth account. It is not stored in Firestore or this app.
+          Login uses Username + Password only. The password is never stored in Firestore or this app.
         </div>
 
         <div class="md:col-span-2 flex justify-end gap-2">
