@@ -412,3 +412,21 @@ See `AUTH_TASKS_SETUP.md` for exact steps.
 - Firestore user profiles store `username`, role, active status and optional linked Crew record.
 - Passwords are never stored in Firestore or localStorage.
 - Existing management profiles without a username are migrated when possible while signed in.
+
+
+## v18 — Existing `@framefusion.lk` Username Compatibility
+
+Existing Firebase Auth users such as:
+
+- `admin@framefusion.lk`
+- `uditha@framefusion.lk`
+
+can now sign in from the FrameFusion app using only:
+
+- Username: `admin`
+- Password: the existing Firebase password
+
+The app first tries the v17 internal domain `@framefusion.local`, then automatically
+tries the existing `@framefusion.lk` identifier. Users never need to type the domain.
+
+Existing `@framefusion.lk` accounts are not force-renamed.

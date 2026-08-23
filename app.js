@@ -161,6 +161,7 @@ function saveLocalCache(){
 
 
 const AUTH_USERNAME_DOMAIN = "framefusion.local";
+const AUTH_USERNAME_LEGACY_DOMAINS = ["framefusion.lk"];
 
 function normalizeUsername(value){
   return String(value||"")
@@ -175,6 +176,13 @@ function isValidUsername(value){
 }
 function authEmailFromUsername(username){
   return `${normalizeUsername(username)}@${AUTH_USERNAME_DOMAIN}`;
+}
+function authEmailCandidatesFromUsername(username){
+  const clean=normalizeUsername(username);
+  return [
+    `${clean}@${AUTH_USERNAME_DOMAIN}`,
+    ...AUTH_USERNAME_LEGACY_DOMAINS.map(domain=>`${clean}@${domain}`)
+  ];
 }
 function usernameFromAuthEmail(email){
   const e=String(email||"").trim().toLowerCase();
@@ -313,7 +321,9 @@ async function bootstrapAdminProfile(){
   try{
     // Convert a freshly signed-in legacy/first Firebase account to the internal
     // synthetic auth email so future sign-ins require only Username + Password.
-    if(String(currentAuthUser.email||"").toLowerCase()!==authEmail){
+    const currentEmail=String(currentAuthUser.email||"").toLowerCase();
+    const acceptedEmails=authEmailCandidatesFromUsername(username);
+    if(!acceptedEmails.includes(currentEmail)){
       await updateEmail(currentAuthUser,authEmail);
     }
     const payload={...profile};
@@ -338,9 +348,12 @@ async function migrateLegacyManagementUsername(user,profile){
   if(!isValidUsername(username)) return profile;
   const migrated={...profile,username,displayName:profile.displayName||username,updatedAt:Date.now()};
   try{
-    const targetEmail=authEmailFromUsername(username);
-    if(String(user.email||"").toLowerCase()!==targetEmail){
-      await updateEmail(user,targetEmail);
+    const currentEmail=String(user.email||"").toLowerCase();
+    const acceptedEmails=authEmailCandidatesFromUsername(username);
+    // Existing username@framefusion.lk accounts are already valid username accounts.
+    // Do not force-change them to .local.
+    if(!acceptedEmails.includes(currentEmail)){
+      await updateEmail(user,authEmailFromUsername(username));
     }
     const payload=cleanForFirestore(migrated);
     delete payload.id;
@@ -398,16 +411,32 @@ async function loginUser(username,password){
     showAuthMessage("Enter a valid username.","error");
     return;
   }
-  showAuthMessage("Signing in…");
-  try{
-    await signInWithEmailAndPassword(auth,authEmailFromUsername(clean),password);
-    showAuthMessage("");
-  }catch(error){
-    console.error(error);
-    showAuthMessage("Sign in failed. Check the username and password.","error");
-  }
-}
 
+  showAuthMessage("Signing in…");
+  let lastError=null;
+
+  for(const authEmail of authEmailCandidatesFromUsername(clean)){
+    try{
+      await signInWithEmailAndPassword(auth,authEmail,password);
+      showAuthMessage("");
+      return;
+    }catch(error){
+      lastError=error;
+      // Try the next internal username domain when the credentials do not match.
+      if(![
+        "auth/invalid-credential",
+        "auth/user-not-found",
+        "auth/wrong-password",
+        "auth/invalid-email"
+      ].includes(error?.code)){
+        break;
+      }
+    }
+  }
+
+  console.error("Username sign in failed:",lastError);
+  showAuthMessage("Sign in failed. Check the username and password.","error");
+}
 function cloudSyncAllowed(){
   return isFinance();
 }

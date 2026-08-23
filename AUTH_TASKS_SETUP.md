@@ -101,3 +101,18 @@ If a management user forgets a password, an Admin can handle the account through
 Firebase Console, or create a replacement management username and disable the old one.
 
 Passwords are never stored in Firestore, localStorage, or the website source code.
+
+
+## Existing `@framefusion.lk` accounts
+
+v18 supports both internal username formats:
+
+- `username@framefusion.local`
+- `username@framefusion.lk`
+
+So if Firebase Authentication already contains `admin@framefusion.lk`, sign into the app with:
+
+- Username: `admin`
+- Password: that Firebase user's existing password
+
+Do not change the Firebase Authentication identifier just to use username login.
