@@ -1,8 +1,17 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
 import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  sendPasswordResetEmail,
+  createUserWithEmailAndPassword
+} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+import {
   getFirestore,
   collection,
   getDocs,
+  getDoc,
   doc,
   setDoc,
   deleteDoc
@@ -19,6 +28,7 @@ const firebaseConfig = {
 
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
+const auth = getAuth(firebaseApp);
 
 const EMAILJS_CONFIG = {
   serviceId: "service_h7agh7l",
@@ -35,6 +45,51 @@ const PROJECT_SERVICE_PRESETS = [
   "Highlights / Social Media"
 ];
 
+const TASK_TEMPLATES = {
+  "Live Production":[
+    "Camera positions and framing checked",
+    "Primary and backup internet tested",
+    "Audio feeds and commentary checked",
+    "Graphics / scorecard system ready",
+    "Recording storage and backup verified"
+  ],
+  "Photography":[
+    "Camera bodies and lenses checked",
+    "Batteries and memory cards prepared",
+    "Client shot list confirmed",
+    "Photo backup workflow ready",
+    "Final delivery folder prepared"
+  ],
+  "Videography":[
+    "Camera and audio kit checked",
+    "Gimbal / tripod setup checked",
+    "Batteries and media prepared",
+    "Shot list / schedule confirmed",
+    "Footage backup plan ready"
+  ],
+  "After Movie":[
+    "All footage backed up",
+    "Selects / timeline organized",
+    "Rough cut completed",
+    "Color and audio finishing completed",
+    "Final export and client delivery completed"
+  ],
+  "Live Streaming":[
+    "Streaming account and event key checked",
+    "Primary encoder tested",
+    "Backup connection tested",
+    "Audio sync checked",
+    "Stream recording enabled"
+  ],
+  "Highlights / Social Media":[
+    "Content moments list confirmed",
+    "Vertical / horizontal formats planned",
+    "Brand assets ready",
+    "Fast edit workflow prepared",
+    "Upload / publishing checklist confirmed"
+  ]
+};
+
 
 const STORAGE_KEYS = {
   crew: "framefusion_crew_v1",
@@ -42,7 +97,8 @@ const STORAGE_KEYS = {
   signatures: "framefusion_signatures_v1",
   receipts: "framefusion_receipts_v1",
   settings: "framefusion_settings_v1",
-  rentals: "framefusion_rentals_v1"
+  rentals: "framefusion_rentals_v1",
+  tasks: "framefusion_tasks_v1"
 };
 
 const CLOUD_COLLECTIONS = {
@@ -51,7 +107,9 @@ const CLOUD_COLLECTIONS = {
   signatures: "framefusion_signatures",
   receipts: "framefusion_receipts",
   settings: "framefusion_settings",
-  rentals: "framefusion_rentals"
+  rentals: "framefusion_rentals",
+  tasks: "framefusion_tasks",
+  users: "framefusion_users"
 };
 
 let crew = load(STORAGE_KEYS.crew, []);
@@ -59,6 +117,11 @@ let projects = load(STORAGE_KEYS.projects, []);
 let signatureLibrary = load(STORAGE_KEYS.signatures, []);
 let receipts = load(STORAGE_KEYS.receipts, []);
 let rentals = load(STORAGE_KEYS.rentals, []);
+let tasks = load(STORAGE_KEYS.tasks, []);
+let currentAuthUser = null;
+let currentUserProfile = null;
+let userProfiles = [];
+let secondaryUserAuth = null;
 let appSettings = load(STORAGE_KEYS.settings, {
   id:"company",
   companyName:"FrameFusion Studio",
@@ -93,7 +156,208 @@ function saveLocalCache(){
   localStorage.setItem(STORAGE_KEYS.receipts, JSON.stringify(receipts));
   localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(appSettings));
   localStorage.setItem(STORAGE_KEYS.rentals, JSON.stringify(rentals));
+  localStorage.setItem(STORAGE_KEYS.tasks, JSON.stringify(tasks));
 }
+
+function roleName(role){
+  return ({admin:"Admin",director:"Director",manager:"Manager",accountant:"Accountant"})[role]||"User";
+}
+function isActiveProfile(){
+  return !!currentUserProfile && currentUserProfile.active!==false;
+}
+function userRole(){
+  return currentUserProfile?.role||"";
+}
+function isAdmin(){
+  return userRole()==="admin";
+}
+function isManager(){
+  return ["admin","director","manager"].includes(userRole());
+}
+function isFinance(){
+  return ["admin","director","manager","accountant"].includes(userRole());
+}
+function isCrewUser(){
+  return false;
+}
+function canView(view){
+  const role=userRole();
+  const map={
+    admin:["dashboard","projects","crew","tasks","payments","rentals","financial","backup","users"],
+    director:["dashboard","projects","crew","tasks","payments","rentals","financial","backup"],
+    manager:["dashboard","projects","crew","tasks","payments","rentals","financial","backup"],
+    accountant:["dashboard","tasks","payments","rentals","financial"]
+  };
+  return (map[role]||[]).includes(view);
+}
+function canManageTasks(){
+  return isManager();
+}
+function canManageProjects(){
+  return isManager();
+}
+function canManageCrew(){
+  return isManager();
+}
+function canManagePayments(){
+  return isFinance();
+}
+function requirePermission(ok,message="You do not have permission for this action."){
+  if(ok) return true;
+  toast(message);
+  return false;
+}
+function applyRoleAccess(){
+  const allowed=[...document.querySelectorAll(".nav-btn")];
+  allowed.forEach(btn=>{
+    btn.classList.toggle("hidden",!canView(btn.dataset.view));
+  });
+
+  document.querySelectorAll(".admin-only").forEach(el=>el.classList.toggle("hidden",!isAdmin()));
+  document.querySelectorAll(".manager-action").forEach(el=>el.classList.toggle("hidden",!isManager()));
+
+  const quickCrew=document.getElementById("quickCrewBtn");
+  const quickProject=document.getElementById("quickProjectBtn");
+  if(quickCrew) quickCrew.classList.toggle("hidden",!canManageCrew());
+  if(quickProject) quickProject.classList.toggle("hidden",!canManageProjects());
+
+  const topName=document.getElementById("topUserName");
+  const topRole=document.getElementById("topUserRole");
+  if(topName) topName.textContent=currentUserProfile?.displayName||currentAuthUser?.email||"User";
+  if(topRole) topRole.textContent=roleName(userRole());
+
+  document.body.dataset.userRole=userRole();
+
+  const visibleCurrent=document.querySelector(".nav-btn.active:not(.hidden)")?.dataset.view;
+  if(!visibleCurrent){
+    const fallback="dashboard";
+    if(canView(fallback)) setView(fallback);
+  }
+}
+function showAuthMessage(message,type=""){
+  const el=document.getElementById("authMessage");
+  if(!el) return;
+  el.textContent=message||"";
+  el.className=`auth-message ${type}`.trim();
+}
+function showLoginGate(){
+  document.getElementById("authGate")?.classList.remove("hidden");
+  document.getElementById("appShell")?.classList.add("hidden");
+  document.getElementById("loginPanel")?.classList.remove("hidden");
+  document.getElementById("bootstrapPanel")?.classList.add("hidden");
+}
+function showBootstrapGate(user){
+  document.getElementById("authGate")?.classList.remove("hidden");
+  document.getElementById("appShell")?.classList.add("hidden");
+  document.getElementById("loginPanel")?.classList.add("hidden");
+  document.getElementById("bootstrapPanel")?.classList.remove("hidden");
+  const box=document.getElementById("bootstrapIdentity");
+  if(box) box.innerHTML=`<b>${escapeHtml(user.email||"")}</b><small>Firebase UID: ${escapeHtml(user.uid)}</small>`;
+  lucide.createIcons();
+}
+function showAuthenticatedApp(){
+  document.getElementById("authGate")?.classList.add("hidden");
+  document.getElementById("appShell")?.classList.remove("hidden");
+  applyRoleAccess();
+  lucide.createIcons();
+}
+async function loadCurrentUserProfile(user){
+  const snap=await getDoc(doc(db,CLOUD_COLLECTIONS.users,user.uid));
+  if(!snap.exists()) return null;
+  return {id:snap.id,...snap.data()};
+}
+async function bootstrapAdminProfile(){
+  if(!currentAuthUser) return;
+  const profile={
+    id:currentAuthUser.uid,
+    uid:currentAuthUser.uid,
+    email:currentAuthUser.email||"",
+    displayName:"FrameFusion Admin",
+    role:"admin",
+    crewId:"",
+    active:true,
+    createdAt:Date.now(),
+    updatedAt:Date.now()
+  };
+  try{
+    const payload={...profile};
+    delete payload.id;
+    await setDoc(doc(db,CLOUD_COLLECTIONS.users,currentAuthUser.uid),payload);
+    currentUserProfile=profile;
+    toast("Admin profile created");
+    showAuthenticatedApp();
+    await initializeFirestoreData();
+  }catch(error){
+    console.error(error);
+    showAuthMessage("Admin profile could not be created. Keep the old setup rules active for this first bootstrap, then publish the secure v15 rules.","error");
+  }
+}
+async function handleAuthUser(user){
+  currentAuthUser=user||null;
+  currentUserProfile=null;
+  if(!user){
+    cloudReady=false;
+    showLoginGate();
+    return;
+  }
+  try{
+    const profile=await loadCurrentUserProfile(user);
+    if(!profile){
+      showBootstrapGate(user);
+      return;
+    }
+    if(profile.active===false){
+      showAuthMessage("This FrameFusion user account is disabled.","error");
+      await signOut(auth);
+      return;
+    }
+    if(profile.role==="crew"){
+      showAuthMessage("Crew logins are disabled. This app is for management users only.","error");
+      await signOut(auth);
+      return;
+    }
+    currentUserProfile=profile;
+    showAuthenticatedApp();
+    await initializeFirestoreData();
+    const defaultView="dashboard";
+    if(canView(defaultView)) setView(defaultView);
+  }catch(error){
+    console.error("User profile load failed",error);
+    showAuthMessage("Could not load the FrameFusion user profile. Check Firestore rules and internet connection.","error");
+    showLoginGate();
+  }
+}
+function initAuth(){
+  onAuthStateChanged(auth,handleAuthUser);
+}
+async function loginUser(email,password){
+  showAuthMessage("Signing in…");
+  try{
+    await signInWithEmailAndPassword(auth,email,password);
+    showAuthMessage("");
+  }catch(error){
+    console.error(error);
+    showAuthMessage("Sign in failed. Check the email/password and Firebase Authentication setup.","error");
+  }
+}
+async function requestPasswordReset(){
+  const email=String(document.getElementById("loginEmail")?.value||"").trim();
+  if(!email){
+    showAuthMessage("Enter your email address first.","error");
+    return;
+  }
+  try{
+    await sendPasswordResetEmail(auth,email);
+    showAuthMessage("Password reset email sent.","success");
+  }catch(error){
+    console.error(error);
+    showAuthMessage("Could not send password reset email.","error");
+  }
+}
+function cloudSyncAllowed(){
+  return isFinance();
+}
+
 function save(){
   saveLocalCache();
   scheduleCloudSync();
@@ -142,14 +406,26 @@ async function syncAllToFirestore(){
   cloudSyncPending=false;
   setCloudStatus("connecting","Syncing Firestore");
   try{
-    await Promise.all([
-      syncOneCollection(CLOUD_COLLECTIONS.crew,crew),
-      syncOneCollection(CLOUD_COLLECTIONS.projects,projects),
-      syncOneCollection(CLOUD_COLLECTIONS.signatures,signatureLibrary),
-      syncOneCollection(CLOUD_COLLECTIONS.receipts,receipts),
-      syncOneCollection(CLOUD_COLLECTIONS.settings,[{id:"company",...appSettings}]),
-      syncOneCollection(CLOUD_COLLECTIONS.rentals,rentals)
-    ]);
+    const jobs=[];
+    if(isManager()){
+      jobs.push(
+        syncOneCollection(CLOUD_COLLECTIONS.crew,crew),
+        syncOneCollection(CLOUD_COLLECTIONS.projects,projects),
+        syncOneCollection(CLOUD_COLLECTIONS.signatures,signatureLibrary),
+        syncOneCollection(CLOUD_COLLECTIONS.receipts,receipts),
+        syncOneCollection(CLOUD_COLLECTIONS.rentals,rentals)
+      );
+      if(isAdmin()){
+        jobs.push(syncOneCollection(CLOUD_COLLECTIONS.settings,[{id:"company",...appSettings}]));
+      }
+    }else if(userRole()==="accountant"){
+      jobs.push(
+        syncOneCollection(CLOUD_COLLECTIONS.projects,projects),
+        syncOneCollection(CLOUD_COLLECTIONS.receipts,receipts),
+        syncOneCollection(CLOUD_COLLECTIONS.rentals,rentals)
+      );
+    }
+    await Promise.all(jobs);
     setCloudStatus("online","Firestore Synced");
   }catch(error){
     console.error("Firestore sync failed:",error);
@@ -163,6 +439,7 @@ async function syncAllToFirestore(){
   }
 }
 function scheduleCloudSync(){
+  if(!cloudSyncAllowed()) return;
   if(!cloudReady){
     cloudSyncPending=true;
     return;
@@ -320,22 +597,24 @@ function projectServiceRentalPaid(projectId,serviceId){
 async function initializeFirestoreData(){
   setCloudStatus("connecting","Connecting Firestore");
   try{
-    const [cloudCrew,cloudProjects,cloudSignatures,cloudReceipts,cloudSettings,cloudRentals]=await Promise.all([
+    const [cloudCrew,cloudProjects,cloudSignatures,cloudReceipts,cloudSettings,cloudRentals,cloudTasks]=await Promise.all([
       readCloudCollection(CLOUD_COLLECTIONS.crew),
       readCloudCollection(CLOUD_COLLECTIONS.projects),
       readCloudCollection(CLOUD_COLLECTIONS.signatures),
       readCloudCollection(CLOUD_COLLECTIONS.receipts),
       readCloudCollection(CLOUD_COLLECTIONS.settings),
-      readCloudCollection(CLOUD_COLLECTIONS.rentals)
+      readCloudCollection(CLOUD_COLLECTIONS.rentals),
+      readCloudCollection(CLOUD_COLLECTIONS.tasks)
     ]);
 
-    const cloudHasData=cloudCrew.length || cloudProjects.length || cloudSignatures.length || cloudReceipts.length || cloudSettings.length || cloudRentals.length;
+    const cloudHasData=cloudCrew.length || cloudProjects.length || cloudSignatures.length || cloudReceipts.length || cloudSettings.length || cloudRentals.length || cloudTasks.length;
     if(cloudHasData){
       crew=cloudCrew;
       projects=cloudProjects;
       signatureLibrary=cloudSignatures;
       receipts=cloudReceipts;
       rentals=cloudRentals;
+      tasks=cloudTasks;
       if(cloudSettings.length){
         appSettings={...appSettings,...cloudSettings[0],id:"company"};
       }
@@ -347,9 +626,9 @@ async function initializeFirestoreData(){
     migrateProjectServices();
     cloudReady=true;
 
-    if(!crew.length && !projects.length){
+    if(!crew.length && !projects.length && isManager()){
       seedDemo();
-    }else if(!cloudHasData){
+    }else if(!cloudHasData && isManager()){
       await syncAllToFirestore();
     }
 
@@ -359,12 +638,14 @@ async function initializeFirestoreData(){
     renderPayments();
     renderRentals();
     renderFinancial();
+    renderTasks();
+    if(isAdmin()) await loadUserProfiles();
     setCloudStatus("online","Firestore Connected");
   }catch(error){
     console.error("Firestore connection failed:",error);
     cloudReady=false;
     setCloudStatus("offline","Using Local Cache");
-    if(!crew.length && !projects.length) seedDemo();
+    if(!crew.length && !projects.length && isManager()) seedDemo();
     migrateRentalExpenseRecords();
     migrateRentalPaymentArrays();
     migrateProjectServices();
@@ -374,6 +655,7 @@ async function initializeFirestoreData(){
     renderPayments();
     renderRentals();
     renderFinancial();
+    renderTasks();
   }
 }
 function uid(prefix="id"){
@@ -477,18 +759,24 @@ function projectNumbers(p){
 }
 
 function setView(view){
+  if(currentUserProfile && !canView(view)){
+    toast("This section is not available for your role.");
+    return;
+  }
   document.querySelectorAll(".app-view").forEach(v=>v.classList.add("hidden"));
   const target = document.getElementById(`view-${view}`);
   if(target) target.classList.remove("hidden");
   document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===view));
-  const names = {dashboard:"Dashboard",projects:"Projects",crew:"Crew Members",payments:"Payments & Receipts",rentals:"Rental Payments",financial:"Financial",backup:"Backup & Restore"};
+  const names = {dashboard:"Dashboard",projects:"Projects",crew:"Crew Members",tasks:"Project Tasks",payments:"Payments & Receipts",rentals:"Rental Payments",financial:"Financial",backup:"Backup & Restore",users:"Users & Roles"};
   document.getElementById("pageTitle").textContent = names[view] || "FrameFusion";
   if(view==="dashboard") renderDashboard();
   if(view==="projects") renderProjects();
   if(view==="crew") renderCrew();
+  if(view==="tasks") renderTasks();
   if(view==="payments") renderPayments();
   if(view==="rentals") renderRentals();
   if(view==="financial") renderFinancial();
+  if(view==="users") renderUsers();
   lucide.createIcons();
 }
 
@@ -497,12 +785,21 @@ function renderDashboard(){
   const totalCrew = projects.reduce((s,p)=>s+projectNumbers(p).crewTotal,0);
   const totalProfit = projects.reduce((s,p)=>s+projectNumbers(p).netProfit,0);
 
-  const stats = [
-    ["folder-kanban",projects.length,"Total Projects"],
-    ["users",crew.length,"Crew Members"],
-    ["wallet",money(totalRevenue),"Project Revenue"],
-    ["badge-dollar-sign",money(totalProfit),"Net Profit"]
-  ];
+  const visibleTasks=tasksForCurrentUser(tasks);
+  const pendingTasks=visibleTasks.filter(t=>t.status!=="done").length;
+  const stats = isCrewUser()
+    ? [
+        ["list-checks",visibleTasks.length,"Assigned Tasks"],
+        ["clock-3",pendingTasks,"Open Tasks"],
+        ["check-circle-2",visibleTasks.filter(t=>t.status==="done").length,"Completed"],
+        ["calendar-days",visibleTasks.filter(t=>isTaskOverdue(t)).length,"Overdue"]
+      ]
+    : [
+        ["folder-kanban",projects.length,"Total Projects"],
+        ["users",crew.length,"Crew Members"],
+        ["list-checks",pendingTasks,"Open Tasks"],
+        ["badge-dollar-sign",money(totalProfit),"Net Profit"]
+      ];
   document.getElementById("dashboardStats").innerHTML = stats.map(([icon,val,label])=>`
     <div class="stat-card">
       <div class="stat-top"><span class="stat-icon"><i data-lucide="${icon}"></i></span></div>
@@ -510,7 +807,7 @@ function renderDashboard(){
       <div class="stat-label">${label}</div>
     </div>`).join("");
 
-  const recent = [...projects].sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).slice(0,5);
+    const recent = [...projects].sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0)).slice(0,5);
   document.getElementById("recentProjects").innerHTML = recent.length ? `
     <div class="divide-y divide-slate-100 mt-3">
       ${recent.map(p=>{
@@ -518,7 +815,7 @@ function renderDashboard(){
         return `<div class="py-3 flex items-center justify-between gap-4">
           <div class="min-w-0">
             <div class="font-black text-ffnavy truncate">${escapeHtml(p.name)}</div>
-            <div class="text-xs text-slate-400 mt-1">${formatDate(p.date)} • ${(p.crew||[]).length} crew members</div>
+            <div class="text-xs text-slate-400 mt-1">${formatDate(p.date)} • ${projectCrewAssignments(p).length} crew assignments</div>
           </div>
           <div class="text-right flex-none">
             <div class="font-black text-ffgreen">${money(n.netProfit)}</div>
@@ -616,9 +913,11 @@ function resetCrewForm(){
   document.getElementById("crewModalTitle").textContent = "Add Crew Member";
 }
 function newCrew(){
+  if(!requirePermission(canManageCrew())) return;
   resetCrewForm(); openModal("crewModal");
 }
 function editCrew(id){
+  if(!requirePermission(canManageCrew())) return;
   const c = crew.find(x=>x.id===id); if(!c) return;
   document.getElementById("crewId").value=c.id;
   document.getElementById("crewName").value=c.name||"";
@@ -631,6 +930,7 @@ function editCrew(id){
   openModal("crewModal");
 }
 function deleteCrew(id){
+  if(!requirePermission(canManageCrew())) return;
   const c=crew.find(x=>x.id===id); if(!c) return;
   if(!confirm(`Delete ${c.name} from the crew database? Existing projects will keep their saved copy.`)) return;
   crew=crew.filter(x=>x.id!==id); save(); renderCrew(); renderDashboard(); toast("Crew member deleted");
@@ -651,10 +951,12 @@ function resetProjectForm(){
   updateProjectCalcs();
 }
 function newProject(){
+  if(!requirePermission(canManageProjects())) return;
   resetProjectForm();
   openModal("projectModal");
 }
 function editProject(id){
+  if(!requirePermission(canManageProjects())) return;
   const p=projects.find(x=>x.id===id);
   if(!p) return;
   normalizeProjectServices(p);
@@ -676,6 +978,7 @@ function editProject(id){
   openModal("projectModal");
 }
 function duplicateProject(id){
+  if(!requirePermission(canManageProjects())) return;
   const p=projects.find(x=>x.id===id);
   if(!p) return;
   const cp=JSON.parse(JSON.stringify(p));
@@ -701,6 +1004,7 @@ function duplicateProject(id){
 }
 
 function deleteProject(id){
+  if(!requirePermission(canManageProjects())) return;
   const p=projects.find(x=>x.id===id); if(!p) return;
   if(!confirm(`Delete "${p.name}"?`)) return;
   projects=projects.filter(x=>x.id!==id); save(); renderProjects(); renderDashboard(); toast("Project deleted");
@@ -1315,6 +1619,7 @@ function renderEventPaymentSection(){
     </div>` : `<div class="text-sm text-slate-400 mt-3">No event payments recorded yet.</div>`;
 }
 async function saveEventPayment(){
+  if(!requirePermission(canManagePayments())) return;
   const projectId=document.getElementById("eventPaymentProject").value;
   const p=projects.find(x=>x.id===projectId);
   if(!p){toast("Select a project");return;}
@@ -1458,6 +1763,7 @@ function openCrewPayment(projectId,serviceId,index){
   lucide.createIcons();
 }
 async function saveCrewPayment(){
+  if(!requirePermission(canManagePayments())) return;
   const projectId=document.getElementById("crewPayProjectId").value;
   const serviceId=document.getElementById("crewPayServiceId").value;
   const index=Number(document.getElementById("crewPayMemberIndex").value);
@@ -1756,6 +2062,7 @@ async function sendRentalReceiptEmail(item,payment){
   }
 }
 async function saveRentalPayment(){
+  if(!requirePermission(canManagePayments())) return;
   const projectId=document.getElementById("rentalProjectId")?.value||"";
   const projectName=projectId?(projects.find(x=>x.id===projectId)?.name||""):"";
   const serviceId=document.getElementById("rentalServiceId")?.value||"";
@@ -1854,6 +2161,7 @@ function openRentalBalancePayment(id){
   lucide.createIcons();
 }
 async function saveRentalBalancePayment(){
+  if(!requirePermission(canManagePayments())) return;
   const id=document.getElementById("rentalBalanceRentalId").value;
   const item=rentals.find(x=>x.id===id);
   if(!item){toast("Rental record not found");return;}
@@ -2214,6 +2522,438 @@ function renderFinancial(){
   </table>`:emptyState("users","No crew payments yet","Department crew payment totals will appear here.");
   lucide.createIcons();
 }
+
+
+function taskStatusLabel(status){
+  return ({pending:"Pending",in_progress:"In Progress",done:"Done"})[status]||"Pending";
+}
+function taskStatusPill(status){
+  const cls=status==="done"?"paid":status==="in_progress"?"partial":"unpaid";
+  return `<span class="status-pill ${cls}">${escapeHtml(taskStatusLabel(status))}</span>`;
+}
+function taskPriorityPill(priority){
+  const p=priority||"normal";
+  return `<span class="task-priority ${p}">${escapeHtml(p.toUpperCase())}</span>`;
+}
+function isTaskOverdue(task){
+  if(!task?.dueDate || task.status==="done") return false;
+  return task.dueDate<todayInputValue();
+}
+function tasksForCurrentUser(list){
+  return list||[];
+}
+function saveTasksLocal(){
+  localStorage.setItem(STORAGE_KEYS.tasks,JSON.stringify(tasks));
+}
+async function persistTask(task){
+  const payload=cleanForFirestore(task);
+  delete payload.id;
+  await setDoc(doc(db,CLOUD_COLLECTIONS.tasks,String(task.id)),payload);
+  saveTasksLocal();
+}
+async function removeTaskCloud(id){
+  await deleteDoc(doc(db,CLOUD_COLLECTIONS.tasks,String(id)));
+  tasks=tasks.filter(t=>t.id!==id);
+  saveTasksLocal();
+}
+function fillTaskProjectSelect(id,includeAll=false){
+  const el=document.getElementById(id);
+  if(!el) return;
+  const current=el.value;
+  el.innerHTML=(includeAll?`<option value="">All Projects</option>`:"")+
+    projects.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
+  if([...el.options].some(o=>o.value===current)) el.value=current;
+}
+function fillTaskServiceSelect(projectId,elementId,includeAll=false){
+  const el=document.getElementById(elementId);
+  if(!el) return;
+  const current=el.value;
+  const p=projects.find(x=>x.id===projectId);
+  const services=p?.services||[];
+  el.innerHTML=(includeAll?`<option value="">All Departments</option>`:"")+
+    services.map(s=>`<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
+  if([...el.options].some(o=>o.value===current)) el.value=current;
+}
+function taskAssigneeOptions(projectId,serviceId,elementId,includeAll=false){
+  const el=document.getElementById(elementId);
+  if(!el) return;
+  const current=el.value;
+  const s=projectServiceById(projectId,serviceId);
+  let members=s?.crew||crew;
+  const seen=new Set();
+  members=members.filter(m=>{
+    const id=m.crewId||m.id;
+    if(!id||seen.has(id)) return false;
+    seen.add(id); return true;
+  });
+  el.innerHTML=(includeAll?`<option value="">All Assignees</option>`:`<option value="">Unassigned</option>`)+
+    members.map(m=>{
+      const id=m.crewId||m.id;
+      return `<option value="${escapeHtml(id)}">${escapeHtml(m.name)}</option>`;
+    }).join("");
+  if([...el.options].some(o=>o.value===current)) el.value=current;
+}
+function syncTaskFormDependencies(){
+  const projectId=document.getElementById("taskProjectId")?.value||"";
+  fillTaskServiceSelect(projectId,"taskServiceId",false);
+  const serviceId=document.getElementById("taskServiceId")?.value||"";
+  taskAssigneeOptions(projectId,serviceId,"taskAssigneeCrewId",false);
+}
+function syncTaskFilterDependencies(){
+  const projectId=document.getElementById("taskProjectFilter")?.value||"";
+  fillTaskServiceSelect(projectId,"taskServiceFilter",true);
+}
+function newTask(){
+  if(!requirePermission(canManageTasks())) return;
+  if(!projects.length){toast("Create a project first");return;}
+  document.getElementById("taskForm").reset();
+  document.getElementById("taskId").value="";
+  document.getElementById("taskModalTitle").textContent="New Task";
+  fillTaskProjectSelect("taskProjectId",false);
+  syncTaskFormDependencies();
+  document.getElementById("taskStatus").value="pending";
+  document.getElementById("taskPriority").value="normal";
+  openModal("taskModal");
+}
+function editTask(id){
+  if(!requirePermission(canManageTasks())) return;
+  const t=tasks.find(x=>x.id===id);
+  if(!t) return;
+  document.getElementById("taskId").value=t.id;
+  document.getElementById("taskModalTitle").textContent="Edit Task";
+  fillTaskProjectSelect("taskProjectId",false);
+  document.getElementById("taskProjectId").value=t.projectId||"";
+  fillTaskServiceSelect(t.projectId,"taskServiceId",false);
+  document.getElementById("taskServiceId").value=t.serviceId||"";
+  taskAssigneeOptions(t.projectId,t.serviceId,"taskAssigneeCrewId",false);
+  document.getElementById("taskAssigneeCrewId").value=t.assigneeCrewId||"";
+  document.getElementById("taskTitle").value=t.title||"";
+  document.getElementById("taskDueDate").value=t.dueDate||"";
+  document.getElementById("taskPriority").value=t.priority||"normal";
+  document.getElementById("taskStatus").value=t.status||"pending";
+  document.getElementById("taskNotes").value=t.notes||"";
+  openModal("taskModal");
+}
+async function saveTaskForm(){
+  if(!requirePermission(canManageTasks())) return;
+  const id=document.getElementById("taskId").value||uid("task");
+  const projectId=document.getElementById("taskProjectId").value;
+  const serviceId=document.getElementById("taskServiceId").value;
+  const p=projects.find(x=>x.id===projectId);
+  const s=projectServiceById(projectId,serviceId);
+  if(!p||!s){toast("Select a project and department");return;}
+  const assigneeCrewId=document.getElementById("taskAssigneeCrewId").value||"";
+  const member=(s.crew||[]).find(m=>m.crewId===assigneeCrewId) || crew.find(c=>c.id===assigneeCrewId);
+  const old=tasks.find(x=>x.id===id);
+  const task={
+    id,
+    projectId,
+    projectName:p.name,
+    serviceId,
+    serviceName:s.name,
+    title:document.getElementById("taskTitle").value.trim(),
+    assigneeCrewId,
+    assigneeName:member?.name||"",
+    dueDate:document.getElementById("taskDueDate").value||"",
+    priority:document.getElementById("taskPriority").value||"normal",
+    status:document.getElementById("taskStatus").value||"pending",
+    notes:document.getElementById("taskNotes").value.trim(),
+    createdByUid:old?.createdByUid||currentAuthUser?.uid||"",
+    createdByName:old?.createdByName||currentUserProfile?.displayName||"",
+    createdAt:old?.createdAt||Date.now(),
+    updatedAt:Date.now()
+  };
+  if(!task.title){toast("Enter the task");return;}
+  const idx=tasks.findIndex(x=>x.id===id);
+  if(idx>=0) tasks[idx]=task; else tasks.unshift(task);
+  try{
+    await persistTask(task);
+    closeModal("taskModal");
+    renderTasks();
+    renderDashboard();
+    toast(old?"Task updated":"Task added");
+  }catch(error){
+    console.error(error);
+    toast("Task could not be saved to Firestore");
+  }
+}
+async function setTaskStatus(id,status){
+  const t=tasks.find(x=>x.id===id);
+  if(!t) return;
+  if(!canManageTasks()){
+    toast("Only Admin, Director or Manager can update task status");
+    return;
+  }
+  t.status=status;
+  t.updatedAt=Date.now();
+  try{
+    await persistTask(t);
+    renderTasks();
+    renderDashboard();
+  }catch(error){
+    console.error(error);
+    toast("Task status update failed");
+  }
+}
+async function deleteTaskItem(id){
+  if(!requirePermission(canManageTasks())) return;
+  const t=tasks.find(x=>x.id===id);
+  if(!t) return;
+  if(!confirm(`Delete task "${t.title}"?`)) return;
+  try{
+    await removeTaskCloud(id);
+    renderTasks();
+    renderDashboard();
+    toast("Task deleted");
+  }catch(error){
+    console.error(error);
+    toast("Task delete failed");
+  }
+}
+function taskFilterList(){
+  let list=tasksForCurrentUser(tasks);
+  const projectId=document.getElementById("taskProjectFilter")?.value||"";
+  const serviceId=document.getElementById("taskServiceFilter")?.value||"";
+  const status=document.getElementById("taskStatusFilter")?.value||"";
+  const assignee=document.getElementById("taskAssigneeFilter")?.value||"";
+  const q=(document.getElementById("taskSearch")?.value||"").trim().toLowerCase();
+  if(projectId) list=list.filter(t=>t.projectId===projectId);
+  if(serviceId) list=list.filter(t=>t.serviceId===serviceId);
+  if(status) list=list.filter(t=>t.status===status);
+  if(assignee) list=list.filter(t=>t.assigneeCrewId===assignee);
+  if(q) list=list.filter(t=>[
+    t.title,t.projectName,t.serviceName,t.assigneeName,t.notes
+  ].join(" ").toLowerCase().includes(q));
+  return list.sort((a,b)=>{
+    if(a.status==="done" && b.status!=="done") return 1;
+    if(a.status!=="done" && b.status==="done") return -1;
+    return String(a.dueDate||"9999").localeCompare(String(b.dueDate||"9999")) || (b.updatedAt||0)-(a.updatedAt||0);
+  });
+}
+function renderTaskStats(){
+  const wrap=document.getElementById("taskStats");
+  if(!wrap) return;
+  const list=tasksForCurrentUser(tasks);
+  const stats=[
+    ["list-todo",list.filter(t=>t.status==="pending").length,"Pending"],
+    ["loader-circle",list.filter(t=>t.status==="in_progress").length,"In Progress"],
+    ["check-circle-2",list.filter(t=>t.status==="done").length,"Done"],
+    ["triangle-alert",list.filter(isTaskOverdue).length,"Overdue"]
+  ];
+  wrap.innerHTML=stats.map(([icon,val,label])=>`
+    <div class="stat-card">
+      <div class="stat-top"><span class="stat-icon"><i data-lucide="${icon}"></i></span></div>
+      <div class="stat-value">${val}</div>
+      <div class="stat-label">${label}</div>
+    </div>`).join("");
+}
+function renderTasks(){
+  const wrap=document.getElementById("tasksList");
+  if(!wrap) return;
+  renderTaskStats();
+  fillTaskProjectSelect("taskProjectFilter",true);
+  const projectFilter=document.getElementById("taskProjectFilter")?.value||"";
+  fillTaskServiceSelect(projectFilter,"taskServiceFilter",true);
+  taskAssigneeOptions("","","taskAssigneeFilter",true);
+
+  const list=taskFilterList();
+  if(!list.length){
+    wrap.innerHTML=emptyState("list-checks","No tasks found","Add a task or generate a department checklist.");
+    lucide.createIcons();
+    return;
+  }
+
+  wrap.innerHTML=list.map(t=>`
+    <article class="task-card ${t.status==="done"?"task-done":""} ${isTaskOverdue(t)?"task-overdue":""}">
+      <button class="task-check-btn" title="Toggle status" onclick="setTaskStatus('${t.id}','${t.status==="done"?"pending":"done"}')">
+        <i data-lucide="${t.status==="done"?"check-circle-2":"circle"}"></i>
+      </button>
+      <div class="task-card-main">
+        <div class="task-card-top">
+          <div>
+            <h4>${escapeHtml(t.title)}</h4>
+            <p>${escapeHtml(t.projectName)} <span>•</span> ${escapeHtml(t.serviceName)}</p>
+          </div>
+          <div class="task-badges">
+            ${taskPriorityPill(t.priority)}
+            ${taskStatusPill(t.status)}
+          </div>
+        </div>
+        <div class="task-meta">
+          <span><i data-lucide="user-round"></i>${escapeHtml(t.assigneeName||"Unassigned")}</span>
+          <span class="${isTaskOverdue(t)?"financial-negative":""}"><i data-lucide="calendar-days"></i>${t.dueDate?formatDate(t.dueDate):"No due date"}</span>
+          ${t.notes?`<span><i data-lucide="notebook-pen"></i>${escapeHtml(t.notes)}</span>`:""}
+        </div>
+        ${t.status!=="done"?`<div class="task-progress-actions">
+          <button onclick="setTaskStatus('${t.id}','pending')" class="${t.status==="pending"?"active":""}">Pending</button>
+          <button onclick="setTaskStatus('${t.id}','in_progress')" class="${t.status==="in_progress"?"active":""}">In Progress</button>
+          <button onclick="setTaskStatus('${t.id}','done')">Done</button>
+        </div>`:""}
+      </div>
+      ${canManageTasks()?`<div class="task-admin-actions">
+        <button class="icon-mini" onclick="editTask('${t.id}')"><i data-lucide="pencil"></i></button>
+        <button class="icon-mini danger" onclick="deleteTaskItem('${t.id}')"><i data-lucide="trash-2"></i></button>
+      </div>`:""}
+    </article>`).join("");
+  lucide.createIcons();
+}
+async function generateProjectChecklist(){
+  if(!requirePermission(canManageTasks())) return;
+  const projectId=document.getElementById("taskProjectFilter")?.value||projects[0]?.id||"";
+  const p=projects.find(x=>x.id===projectId);
+  if(!p){toast("Select a project in the task filter first");return;}
+  const items=[];
+  for(const s of (p.services||[])){
+    const templates=TASK_TEMPLATES[s.name]||[
+      `${s.name} pre-production checklist confirmed`,
+      `${s.name} equipment / resources checked`,
+      `${s.name} execution readiness confirmed`,
+      `${s.name} final delivery / handover checked`
+    ];
+    const defaultAssignee=(s.crew||[])[0];
+    templates.forEach(title=>{
+      const exists=tasks.some(t=>t.projectId===p.id && t.serviceId===s.id && t.title.toLowerCase()===title.toLowerCase());
+      if(exists) return;
+      items.push({
+        id:uid("task"),
+        projectId:p.id,
+        projectName:p.name,
+        serviceId:s.id,
+        serviceName:s.name,
+        title,
+        assigneeCrewId:defaultAssignee?.crewId||"",
+        assigneeName:defaultAssignee?.name||"",
+        dueDate:p.date||"",
+        priority:"normal",
+        status:"pending",
+        notes:"",
+        createdByUid:currentAuthUser?.uid||"",
+        createdByName:currentUserProfile?.displayName||"",
+        createdAt:Date.now(),
+        updatedAt:Date.now()
+      });
+    });
+  }
+  if(!items.length){toast("Checklist already exists for this project");return;}
+  try{
+    await Promise.all(items.map(persistTask));
+    tasks.unshift(...items);
+    saveTasksLocal();
+    renderTasks();
+    renderDashboard();
+    toast(`${items.length} checklist tasks generated`);
+  }catch(error){
+    console.error(error);
+    toast("Checklist generation failed");
+  }
+}
+
+async function loadUserProfiles(){
+  if(!isAdmin()) return;
+  try{
+    userProfiles=await readCloudCollection(CLOUD_COLLECTIONS.users);
+    renderUsers();
+  }catch(error){
+    console.error(error);
+  }
+}
+function renderUsers(){
+  const wrap=document.getElementById("usersTable");
+  if(!wrap) return;
+  if(!isAdmin()){
+    wrap.innerHTML=emptyState("shield-ban","Admin only","User management is available only to Admin accounts.");
+    return;
+  }
+  if(!userProfiles.length){
+    wrap.innerHTML=emptyState("user-plus","No user profiles","Create the first staff login.");
+    lucide.createIcons();
+    return;
+  }
+  wrap.innerHTML=`<table class="data-table">
+    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Linked Crew</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead>
+    <tbody>${userProfiles.sort((a,b)=>(a.displayName||"").localeCompare(b.displayName||"")).map(u=>{
+      const linked=crew.find(c=>c.id===u.crewId);
+      const self=u.id===currentAuthUser?.uid;
+      return `<tr>
+        <td><b class="text-ffnavy">${escapeHtml(u.displayName||"User")}</b>${self?` <span class="you-pill">YOU</span>`:""}</td>
+        <td>${escapeHtml(u.email||"")}</td>
+        <td><span class="role-access-pill role-${escapeHtml(u.role||"crew")}">${escapeHtml(roleName(u.role))}</span></td>
+        <td>${escapeHtml(linked?.name||"—")}</td>
+        <td><span class="status-pill ${u.active===false?"unpaid":"paid"}">${u.active===false?"DISABLED":"ACTIVE"}</span></td>
+        <td><div class="flex justify-end gap-2">
+          <button class="icon-mini" title="Send Password Reset" onclick="sendUserPasswordReset('${escapeHtml(u.email||"")}')"><i data-lucide="key-round"></i></button>
+          ${!self?`<button class="btn btn-compact ${u.active===false?"btn-primary":"btn-light"}" onclick="toggleUserActive('${u.id}',${u.active===false?"true":"false"})">${u.active===false?"Enable":"Disable"}</button>`:""}
+        </div></td>
+      </tr>`;
+    }).join("")}</tbody>
+  </table>`;
+  lucide.createIcons();
+}
+function openNewUser(){
+  if(!requirePermission(isAdmin(),"Admin access required.")) return;
+  document.getElementById("userForm").reset();
+  const select=document.getElementById("userCrewId");
+  select.innerHTML=`<option value="">Not linked</option>`+
+    crew.map(c=>`<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)} — ${escapeHtml(c.role)}</option>`).join("");
+  openModal("userModal");
+}
+function getSecondaryUserAuth(){
+  if(secondaryUserAuth) return secondaryUserAuth;
+  const secondaryApp=initializeApp(firebaseConfig,"FrameFusionUserAdmin");
+  secondaryUserAuth=getAuth(secondaryApp);
+  return secondaryUserAuth;
+}
+async function createStaffUser(){
+  if(!requirePermission(isAdmin(),"Admin access required.")) return;
+  const displayName=document.getElementById("userDisplayName").value.trim();
+  const email=document.getElementById("userEmail").value.trim().toLowerCase();
+  const password=document.getElementById("userPassword").value;
+  const role=document.getElementById("userRole").value;
+  const crewId=document.getElementById("userCrewId").value||"";
+  const allowedRoles=["admin","director","manager","accountant"];
+  if(!displayName||!email||password.length<6){toast("Complete the user details");return;}
+  if(!allowedRoles.includes(role)){toast("Only management roles can receive app logins");return;}
+  try{
+    const secAuth=getSecondaryUserAuth();
+    const cred=await createUserWithEmailAndPassword(secAuth,email,password);
+    const uidValue=cred.user.uid;
+    await setDoc(doc(db,CLOUD_COLLECTIONS.users,uidValue),{
+      uid:uidValue,email,displayName,role,crewId,active:true,
+      createdAt:Date.now(),updatedAt:Date.now(),createdBy:currentAuthUser?.uid||""
+    });
+    await signOut(secAuth);
+    closeModal("userModal");
+    await loadUserProfiles();
+    toast("User login created");
+  }catch(error){
+    console.error(error);
+    toast(error?.code==="auth/email-already-in-use"?"That email already has a Firebase login.":"User account could not be created");
+  }
+}
+async function toggleUserActive(uidValue,active){
+  if(!requirePermission(isAdmin())) return;
+  const profile=userProfiles.find(u=>u.id===uidValue);
+  if(!profile) return;
+  try{
+    await setDoc(doc(db,CLOUD_COLLECTIONS.users,uidValue),{
+      ...cleanForFirestore(profile),active:!!active,updatedAt:Date.now()
+    });
+    await loadUserProfiles();
+    toast(active?"User enabled":"User disabled");
+  }catch(error){
+    console.error(error);toast("User status update failed");
+  }
+}
+async function sendUserPasswordReset(email){
+  if(!requirePermission(isAdmin())) return;
+  try{
+    await sendPasswordResetEmail(auth,email);
+    toast("Password reset email sent");
+  }catch(error){
+    console.error(error);toast("Could not send reset email");
+  }
+}
+
 
 function projectSignatures(p){
   const s=p?.signatures||{};
@@ -3219,7 +3959,7 @@ async function downloadActiveReport(){
 
 
 function exportBackup(){
-  const data={app:"FrameFusion Studio Budget & Crew Manager",version:4,exportedAt:new Date().toISOString(),crew,projects,signatureLibrary,receipts,appSettings,rentals};
+  const data={app:"FrameFusion Studio Budget & Crew Manager",version:5,exportedAt:new Date().toISOString(),crew,projects,signatureLibrary,receipts,appSettings,rentals,tasks};
   const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
   const url=URL.createObjectURL(blob);
   const a=document.createElement("a");
@@ -3239,12 +3979,13 @@ function restoreBackup(file){
       signatureLibrary=Array.isArray(data.signatureLibrary)?data.signatureLibrary:[];
       receipts=Array.isArray(data.receipts)?data.receipts:[];
       rentals=Array.isArray(data.rentals)?data.rentals:[];
+      tasks=Array.isArray(data.tasks)?data.tasks:[];
       appSettings=data.appSettings&&typeof data.appSettings==="object"?{...appSettings,...data.appSettings,id:"company"}:appSettings;
       migrateRentalExpenseRecords();
       migrateRentalPaymentArrays();
       migrateProjectServices();
       save();
-      renderDashboard();renderProjects();renderCrew();renderPayments();renderRentals();renderFinancial();
+      renderDashboard();renderProjects();renderCrew();renderPayments();renderRentals();renderFinancial();renderTasks();
       toast("Backup restored and queued for Firestore sync");
     }catch(e){ alert("Invalid FrameFusion backup file."); }
   };
@@ -3252,12 +3993,50 @@ function restoreBackup(file){
 }
 
 document.addEventListener("DOMContentLoaded",()=>{
-  setView("dashboard");
-  initializeFirestoreData();
+  showLoginGate();
 
   document.querySelectorAll(".nav-btn").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
   document.querySelectorAll("[data-jump]").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.jump)));
   document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>closeModal(b.dataset.close)));
+
+  document.getElementById("loginForm")?.addEventListener("submit",e=>{
+    e.preventDefault();
+    loginUser(
+      document.getElementById("loginEmail").value.trim(),
+      document.getElementById("loginPassword").value
+    );
+  });
+  document.getElementById("forgotPasswordBtn")?.addEventListener("click",requestPasswordReset);
+  document.getElementById("bootstrapAdminBtn")?.addEventListener("click",bootstrapAdminProfile);
+  document.getElementById("bootstrapSignOutBtn")?.addEventListener("click",()=>signOut(auth));
+  document.getElementById("signOutBtn")?.addEventListener("click",()=>signOut(auth));
+
+  document.getElementById("newTaskBtn")?.addEventListener("click",newTask);
+  document.getElementById("generateChecklistBtn")?.addEventListener("click",generateProjectChecklist);
+  document.getElementById("taskProjectFilter")?.addEventListener("change",()=>{
+    syncTaskFilterDependencies();renderTasks();
+  });
+  ["taskServiceFilter","taskStatusFilter","taskAssigneeFilter"].forEach(id=>{
+    document.getElementById(id)?.addEventListener("change",renderTasks);
+  });
+  document.getElementById("taskSearch")?.addEventListener("input",renderTasks);
+  document.getElementById("taskProjectId")?.addEventListener("change",syncTaskFormDependencies);
+  document.getElementById("taskServiceId")?.addEventListener("change",()=>{
+    taskAssigneeOptions(
+      document.getElementById("taskProjectId").value,
+      document.getElementById("taskServiceId").value,
+      "taskAssigneeCrewId",
+      false
+    );
+  });
+  document.getElementById("taskForm")?.addEventListener("submit",e=>{
+    e.preventDefault();saveTaskForm();
+  });
+
+  document.getElementById("newUserBtn")?.addEventListener("click",openNewUser);
+  document.getElementById("userForm")?.addEventListener("submit",e=>{
+    e.preventDefault();createStaffUser();
+  });
 
   document.getElementById("quickCrewBtn").addEventListener("click",newCrew);
   document.getElementById("quickProjectBtn").addEventListener("click",newProject);
@@ -3268,6 +4047,7 @@ document.addEventListener("DOMContentLoaded",()=>{
 
   document.querySelector('[data-action="new-project"]').addEventListener("click",newProject);
   document.querySelector('[data-action="new-crew"]').addEventListener("click",newCrew);
+  document.querySelector('[data-action="tasks"]')?.addEventListener("click",()=>setView("tasks"));
   document.querySelector('[data-action="payments"]').addEventListener("click",()=>setView("payments"));
   document.querySelector('[data-action="rentals"]').addEventListener("click",()=>setView("rentals"));
   document.querySelector('[data-action="financial"]').addEventListener("click",()=>setView("financial"));
@@ -3419,9 +4199,15 @@ document.addEventListener("DOMContentLoaded",()=>{
     m.addEventListener("click",e=>{if(e.target===m && m.id!=="reportModal") closeModal(m.id);});
   });
 
+  initAuth();
   lucide.createIcons();
 });
 
+window.editTask=editTask;
+window.setTaskStatus=setTaskStatus;
+window.deleteTaskItem=deleteTaskItem;
+window.toggleUserActive=toggleUserActive;
+window.sendUserPasswordReset=sendUserPasswordReset;
 window.editCrew=editCrew;
 window.deleteCrew=deleteCrew;
 window.editProject=editProject;

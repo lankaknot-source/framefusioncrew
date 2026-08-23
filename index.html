@@ -32,7 +32,54 @@
 </head>
 
 <body class="min-h-screen bg-slate-100 text-ffink">
-  <div id="appShell" class="min-h-screen lg:flex">
+  <div id="authGate" class="auth-gate no-print">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <img src="assets/framefusion-logo-transparent.png" alt="FrameFusion Studio" />
+        <div>
+          <h1>FRAMEFUSION</h1>
+          <p>STUDIO • CREW MANAGEMENT</p>
+        </div>
+      </div>
+
+      <div id="loginPanel">
+        <p class="eyebrow">Secure Access</p>
+        <h2>Sign in to continue</h2>
+        <p class="auth-copy">Projects, department budgets, payments, rental expenses and task checklists are protected by Firebase Authentication.</p>
+
+        <form id="loginForm" class="auth-form">
+          <label class="field">
+            <span>Email Address</span>
+            <input id="loginEmail" type="email" autocomplete="username" required placeholder="you@framefusion.lk" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="loginPassword" type="password" autocomplete="current-password" required placeholder="••••••••" />
+          </label>
+          <button id="loginBtn" type="submit" class="btn btn-primary auth-main-btn">
+            <i data-lucide="log-in"></i>Sign In
+          </button>
+        </form>
+
+        <button id="forgotPasswordBtn" type="button" class="auth-link-btn">Forgot password?</button>
+        <div id="authMessage" class="auth-message"></div>
+      </div>
+
+      <div id="bootstrapPanel" class="hidden">
+        <div class="auth-setup-icon"><i data-lucide="shield-check"></i></div>
+        <h2>First Admin Setup</h2>
+        <p class="auth-copy">Authentication succeeded, but this account does not have a FrameFusion user profile yet.</p>
+        <div id="bootstrapIdentity" class="auth-identity-box"></div>
+        <button id="bootstrapAdminBtn" type="button" class="btn btn-primary auth-main-btn">
+          <i data-lucide="user-cog"></i>Create Admin Profile
+        </button>
+        <p class="auth-tiny">Use this only for the first management account while the old setup Firestore rules are still active. After this, publish the secure v15 rules.</p>
+        <button id="bootstrapSignOutBtn" type="button" class="auth-link-btn">Sign out</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="appShell" class="min-h-screen lg:flex hidden">
     <aside class="sidebar no-print">
       <div class="brand-block">
         <img src="assets/framefusion-logo-transparent.png" alt="FrameFusion Studio logo" class="brand-logo" />
@@ -52,6 +99,9 @@
         <button class="nav-btn" data-view="crew">
           <i data-lucide="users"></i><span>Crew Members</span>
         </button>
+        <button class="nav-btn" data-view="tasks">
+          <i data-lucide="list-checks"></i><span>Project Tasks</span>
+        </button>
         <button class="nav-btn" data-view="payments">
           <i data-lucide="receipt-text"></i><span>Payments</span>
         </button>
@@ -64,13 +114,16 @@
         <button class="nav-btn" data-view="backup">
           <i data-lucide="database-backup"></i><span>Backup & Restore</span>
         </button>
+        <button class="nav-btn admin-only" data-view="users">
+          <i data-lucide="shield-user"></i><span>Users</span>
+        </button>
       </nav>
 
       <div class="sidebar-note">
         <i data-lucide="hard-drive"></i>
         <div>
-          <div class="font-semibold">Local Storage</div>
-          <div class="text-xs text-slate-400">Firestore cloud + local offline cache.</div>
+          <div class="font-semibold">Secure Cloud</div>
+          <div class="text-xs text-slate-400">Firebase Auth + Firestore + local cache.</div>
         </div>
       </div>
     </aside>
@@ -87,6 +140,14 @@
           </span>
           <button id="quickCrewBtn" class="btn btn-light"><i data-lucide="user-plus"></i> Add Crew</button>
           <button id="quickProjectBtn" class="btn btn-primary"><i data-lucide="plus"></i> New Project</button>
+          <div id="topUserBadge" class="top-user-badge">
+            <span class="top-user-avatar"><i data-lucide="user-round"></i></span>
+            <span class="top-user-copy">
+              <b id="topUserName">User</b>
+              <small id="topUserRole">Role</small>
+            </span>
+          </div>
+          <button id="signOutBtn" class="icon-btn" title="Sign Out"><i data-lucide="log-out"></i></button>
         </div>
       </header>
 
@@ -135,6 +196,11 @@
                 <button class="quick-card" data-action="new-crew">
                   <span class="quick-icon"><i data-lucide="user-plus"></i></span>
                   <span><b>Add Crew Member</b><small>Save to your crew database</small></span>
+                  <i data-lucide="chevron-right"></i>
+                </button>
+                <button class="quick-card" data-action="tasks">
+                  <span class="quick-icon"><i data-lucide="list-checks"></i></span>
+                  <span><b>Project Tasks</b><small>Checklists, assignments and due dates</small></span>
                   <i data-lucide="chevron-right"></i>
                 </button>
                 <button class="quick-card" data-action="payments">
@@ -202,6 +268,52 @@
           </div>
         </div>
 
+
+        <!-- Project Tasks -->
+        <div id="view-tasks" class="app-view hidden">
+          <div id="taskStats" class="grid sm:grid-cols-2 xl:grid-cols-4 gap-4"></div>
+
+          <div class="panel mt-6">
+            <div class="panel-head task-panel-head">
+              <div>
+                <h3>Project Task Checklist</h3>
+                <p>Track department tasks, assignees, deadlines and completion status.</p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button id="generateChecklistBtn" class="btn btn-light manager-action">
+                  <i data-lucide="wand-sparkles"></i>Generate Checklist
+                </button>
+                <button id="newTaskBtn" class="btn btn-primary manager-action">
+                  <i data-lucide="plus"></i>New Task
+                </button>
+              </div>
+            </div>
+
+            <div class="task-filters mt-5">
+              <select id="taskProjectFilter">
+                <option value="">All Projects</option>
+              </select>
+              <select id="taskServiceFilter">
+                <option value="">All Departments</option>
+              </select>
+              <select id="taskStatusFilter">
+                <option value="">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="in_progress">In Progress</option>
+                <option value="done">Done</option>
+              </select>
+              <select id="taskAssigneeFilter">
+                <option value="">All Assignees</option>
+              </select>
+              <div class="search-box">
+                <i data-lucide="search"></i>
+                <input id="taskSearch" type="search" placeholder="Search tasks..." />
+              </div>
+            </div>
+
+            <div id="tasksList" class="task-list mt-5"></div>
+          </div>
+        </div>
 
         <!-- Payments & Receipts -->
         <div id="view-payments" class="app-view hidden">
@@ -493,6 +605,28 @@
           </div>
         </div>
 
+        <!-- Users -->
+        <div id="view-users" class="app-view hidden">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>User Login & Roles</h3>
+                <p>Create management logins and control access by leadership role. Crew members do not receive app logins.</p>
+              </div>
+              <button id="newUserBtn" class="btn btn-primary">
+                <i data-lucide="user-plus"></i>Create User
+              </button>
+            </div>
+            <div class="role-legend mt-4">
+              <span><b>Admin</b> — Everything + users</span>
+              <span><b>Director</b> — Projects, crew, tasks, payments, rentals, financial</span>
+              <span><b>Manager</b> — Projects, crew, tasks, payments, rentals, financial</span>
+              <span><b>Accountant</b> — Payments, rentals, financial and task visibility</span>
+            </div>
+            <div id="usersTable" class="table-wrap mt-5"></div>
+          </div>
+        </div>
+
         <!-- Backup -->
         <div id="view-backup" class="app-view hidden">
           <div class="grid lg:grid-cols-2 gap-6">
@@ -755,6 +889,134 @@
     </div>
   </div>
 
+
+  <!-- Task Modal -->
+  <div id="taskModal" class="modal hidden no-print">
+    <div class="modal-card max-w-2xl">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Project Checklist</p>
+          <h3 id="taskModalTitle">New Task</h3>
+        </div>
+        <button class="icon-btn" data-close="taskModal"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="taskForm" class="grid md:grid-cols-2 gap-4 mt-5">
+        <input id="taskId" type="hidden" />
+
+        <label class="field">
+          <span>Project *</span>
+          <select id="taskProjectId" required></select>
+        </label>
+
+        <label class="field">
+          <span>Service / Department *</span>
+          <select id="taskServiceId" required></select>
+        </label>
+
+        <label class="field md:col-span-2">
+          <span>Task *</span>
+          <input id="taskTitle" required placeholder="e.g. Test internet backup connection" />
+        </label>
+
+        <label class="field">
+          <span>Assign To</span>
+          <select id="taskAssigneeCrewId">
+            <option value="">Unassigned</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Due Date</span>
+          <input id="taskDueDate" type="date" />
+        </label>
+
+        <label class="field">
+          <span>Priority</span>
+          <select id="taskPriority">
+            <option value="normal">Normal</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Status</span>
+          <select id="taskStatus">
+            <option value="pending">Pending</option>
+            <option value="in_progress">In Progress</option>
+            <option value="done">Done</option>
+          </select>
+        </label>
+
+        <label class="field md:col-span-2">
+          <span>Notes</span>
+          <textarea id="taskNotes" rows="3" placeholder="Checklist instructions, client requirements, equipment notes..."></textarea>
+        </label>
+
+        <div class="md:col-span-2 flex justify-end gap-2">
+          <button type="button" class="btn btn-light" data-close="taskModal">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i data-lucide="save"></i>Save Task</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- User Modal -->
+  <div id="userModal" class="modal hidden no-print">
+    <div class="modal-card max-w-xl">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Firebase Login</p>
+          <h3>Create User Account</h3>
+        </div>
+        <button class="icon-btn" data-close="userModal"><i data-lucide="x"></i></button>
+      </div>
+
+      <form id="userForm" class="grid md:grid-cols-2 gap-4 mt-5">
+        <label class="field md:col-span-2">
+          <span>Display Name *</span>
+          <input id="userDisplayName" required placeholder="Staff member name" />
+        </label>
+
+        <label class="field md:col-span-2">
+          <span>Email *</span>
+          <input id="userEmail" type="email" required placeholder="staff@example.com" />
+        </label>
+
+        <label class="field">
+          <span>Temporary Password *</span>
+          <input id="userPassword" type="password" minlength="6" required placeholder="Minimum 6 characters" />
+        </label>
+
+        <label class="field">
+          <span>Role *</span>
+          <select id="userRole" required>
+            <option value="director">Director</option>
+            <option value="manager">Manager</option>
+            <option value="accountant">Accountant</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+
+        <label class="field md:col-span-2">
+          <span>Optional Linked Crew Record</span>
+          <select id="userCrewId">
+            <option value="">Not linked</option>
+          </select>
+        </label>
+
+        <div class="md:col-span-2 rounded-xl bg-sky-50 border border-sky-100 p-3 text-xs text-sky-800">
+          The password is used only to create the Firebase Auth account. It is not stored in Firestore or this app.
+        </div>
+
+        <div class="md:col-span-2 flex justify-end gap-2">
+          <button type="button" class="btn btn-light" data-close="userModal">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i data-lucide="user-plus"></i>Create Login</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- Rental Balance Payment Modal -->
   <div id="rentalBalanceModal" class="modal hidden no-print">

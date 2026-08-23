@@ -1499,3 +1499,150 @@ body.signature-open{
     flex-direction:column;
   }
 }
+
+
+/* v15 — Firebase Auth + Project Tasks */
+.auth-gate{
+  position:fixed;inset:0;z-index:9999;
+  display:grid;place-items:center;
+  padding:22px;
+  background:
+    radial-gradient(circle at 15% 20%,rgba(17,168,229,.20),transparent 34%),
+    radial-gradient(circle at 85% 80%,rgba(32,180,87,.11),transparent 30%),
+    #071426;
+}
+.auth-card{
+  width:min(460px,100%);
+  background:#fff;
+  border-radius:24px;
+  padding:28px;
+  box-shadow:0 30px 90px rgba(0,0,0,.34);
+}
+.auth-brand{
+  display:flex;align-items:center;gap:14px;
+  padding-bottom:22px;margin-bottom:22px;
+  border-bottom:1px solid #e7edf3;
+}
+.auth-brand img{width:62px;height:46px;object-fit:contain;background:#08162a;border-radius:12px;padding:6px}
+.auth-brand h1{margin:0;color:#0f1b31;font-size:20px;font-weight:950;letter-spacing:.04em}
+.auth-brand p{margin:3px 0 0;color:#0ca2df;font-size:9px;font-weight:900;letter-spacing:.22em}
+.auth-card h2{font-size:25px;line-height:1.2;color:#0f1b31;font-weight:950;margin:4px 0 7px}
+.auth-copy{color:#718097;font-size:12px;line-height:1.6;margin-bottom:18px}
+.auth-form{display:grid;gap:13px}
+.auth-main-btn{width:100%;justify-content:center;margin-top:3px}
+.auth-link-btn{
+  display:block;margin:15px auto 0;border:0;background:transparent;
+  color:#168fbe;font-size:12px;font-weight:850;cursor:pointer
+}
+.auth-message{min-height:20px;text-align:center;margin-top:12px;font-size:11px;font-weight:750;color:#64748b}
+.auth-message.error{color:#c62828}
+.auth-message.success{color:#14813d}
+.auth-setup-icon{
+  width:58px;height:58px;border-radius:18px;background:#eaf8ef;color:#1c9b4a;
+  display:grid;place-items:center;margin-bottom:15px
+}
+.auth-setup-icon svg{width:28px;height:28px}
+.auth-identity-box{
+  display:grid;gap:4px;background:#f5f8fb;border:1px solid #e0e7ef;
+  padding:12px;border-radius:12px;margin:15px 0
+}
+.auth-identity-box b{color:#14213a;font-size:12px}
+.auth-identity-box small{color:#8a96a7;font-size:9px;word-break:break-all}
+.auth-tiny{font-size:9px;color:#8a96a7;line-height:1.55;margin-top:12px;text-align:center}
+
+.top-user-badge{
+  display:flex;align-items:center;gap:8px;border:1px solid #dbe4ed;
+  border-radius:12px;padding:6px 9px;background:#fff
+}
+.top-user-avatar{
+  width:30px;height:30px;border-radius:9px;background:#edf8fd;color:#159ed3;
+  display:grid;place-items:center
+}
+.top-user-avatar svg{width:16px;height:16px}
+.top-user-copy{display:grid;line-height:1.15}
+.top-user-copy b{font-size:10px;color:#152239;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.top-user-copy small{font-size:8px;color:#8290a4;text-transform:uppercase;font-weight:850;letter-spacing:.04em}
+
+.task-filters{
+  display:grid;
+  grid-template-columns:1fr 1fr .8fr 1fr minmax(190px,1.25fr);
+  gap:10px
+}
+.task-filters select{
+  width:100%;min-width:0;border:1px solid #dbe4ed;border-radius:11px;
+  padding:10px 11px;background:#fff;color:#25344b;font-size:11px;font-weight:700
+}
+.task-list{display:grid;gap:10px}
+.task-card{
+  display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:11px;
+  align-items:start;border:1px solid #dfe6ee;border-radius:15px;background:#fff;padding:13px;
+  transition:.18s ease
+}
+.task-card:hover{box-shadow:0 10px 28px rgba(15,27,49,.07);transform:translateY(-1px)}
+.task-card.task-done{opacity:.68;background:#f8fbf9}
+.task-card.task-overdue{border-color:#efc4c4;background:#fffafa}
+.task-check-btn{
+  width:38px;height:38px;border-radius:11px;border:1px solid #dce5ed;background:#f8fbfd;
+  display:grid;place-items:center;color:#15a3db;cursor:pointer
+}
+.task-check-btn svg{width:20px;height:20px}
+.task-card-main{min-width:0}
+.task-card-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.task-card h4{margin:0;color:#122038;font-size:14px;font-weight:950}
+.task-card-top p{margin:3px 0 0;color:#8390a2;font-size:9px;font-weight:700}
+.task-card-top p span{margin:0 3px}
+.task-badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.task-priority{
+  display:inline-flex;padding:5px 7px;border-radius:999px;font-size:8px;font-weight:950;
+  background:#eef2f6;color:#5d6b7e
+}
+.task-priority.high{background:#fff2d7;color:#9c6600}
+.task-priority.urgent{background:#ffe7e7;color:#bd1e1e}
+.task-meta{display:flex;flex-wrap:wrap;gap:9px 14px;margin-top:9px}
+.task-meta span{display:inline-flex;align-items:center;gap:5px;color:#68778c;font-size:9px}
+.task-meta svg{width:13px;height:13px}
+.task-progress-actions{display:flex;gap:5px;margin-top:10px}
+.task-progress-actions button{
+  border:1px solid #dce5ee;background:#fff;color:#718096;border-radius:8px;
+  padding:6px 8px;font-size:8px;font-weight:850
+}
+.task-progress-actions button.active{background:#e8f7fd;border-color:#9eddf5;color:#108cb9}
+.task-admin-actions{display:flex;gap:6px;align-items:center}
+.role-legend{display:flex;flex-wrap:wrap;gap:8px}
+.role-legend span{border:1px solid #e1e7ee;background:#f8fafc;border-radius:999px;padding:7px 10px;font-size:9px;color:#66758a}
+.role-access-pill,.you-pill{
+  display:inline-flex;align-items:center;padding:4px 7px;border-radius:999px;
+  font-size:8px;font-weight:950;text-transform:uppercase
+}
+.role-admin{background:#e8efff;color:#3d5ec5}
+.role-manager{background:#e5f7ff;color:#1489b8}
+.role-accountant{background:#eaf9ef;color:#258248}
+.role-crew{background:#f3f0ff;color:#7047b5}
+.you-pill{background:#17243a;color:#fff;margin-left:5px}
+
+
+@media(max-width:1180px){
+  .task-filters{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .task-filters .search-box{grid-column:1/-1}
+}
+@media(max-width:767px){
+  .sidebar nav{grid-template-columns:repeat(9,1fr)!important;min-width:790px}
+  .top-user-badge{display:none}
+  .task-panel-head{align-items:flex-start!important;flex-direction:column}
+  .task-filters{grid-template-columns:minmax(0,1fr)}
+  .task-filters .search-box{grid-column:auto}
+  .task-card{grid-template-columns:36px minmax(0,1fr)}
+  .task-admin-actions{grid-column:2/3}
+  .task-card-top{flex-direction:column}
+  .task-badges{justify-content:flex-start}
+}
+
+
+/* v16 — management-only login */
+.role-director{
+  background:#fff2dc;
+  color:#9a6500;
+}
+body[data-user-role="accountant"] .manager-action{
+  display:none!important;
+}

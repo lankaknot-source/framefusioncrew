@@ -351,3 +351,50 @@ HTML report and generated PDF now show each Department separately with:
 - Target Profit
 - Budget Net Profit
 - Department-specific Crew Breakdown
+
+
+## v15 — Project Task Checklist + Firebase User Login
+
+### Project Task Checklist
+- New **Project Tasks** navigation section.
+- Tasks can be linked to a Project and Service/Department.
+- Task fields: assignee, due date, priority, status and notes.
+- Status: Pending / In Progress / Done.
+- Overdue task detection.
+- Filters by project, department, status, assignee and text search.
+- One-click checklist generator for common FrameFusion departments.
+- Task records are stored in Firestore collection `framefusion_tasks`.
+
+### Firebase Authentication
+- The app is hidden until a Firebase Email/Password user signs in.
+- No public self-registration screen is included.
+- Forgot-password email support.
+- New `framefusion_users` collection stores display name, role, crew link and active/disabled state.
+
+### Roles
+- **Admin:** full access + Users & Roles.
+- **Manager:** projects, crew, tasks, payments, rentals, financial and backup.
+- **Accountant:** dashboard, tasks, payments, rentals and financial.
+- **Crew:** dashboard + assigned tasks.
+
+### User Management
+Admin can create additional Firebase Auth accounts without being signed out by using a secondary Firebase app instance.
+Crew accounts can be linked to Crew Member records.
+Admin can disable profiles and send password reset emails.
+
+### Security
+Use `FIRESTORE_RULES_FIRST_ADMIN_SETUP_ONLY.txt` only for the one-time Admin bootstrap.
+Then immediately publish `FIRESTORE_RULES_SECURE_AUTH.txt`.
+See `AUTH_TASKS_SETUP.md` for exact steps.
+
+
+## v16 — Management-Only Login
+
+- Removed Crew as an app-login role.
+- Allowed login roles are now Admin, Director, Manager and Accountant only.
+- Added Director role.
+- Crew Members remain assignable to departments and project tasks, but they do not log in.
+- Project Task status is updated by Admin / Director / Manager.
+- Accountant can view tasks but cannot change operational checklist status.
+- Secure Firestore rules reject unsupported roles such as legacy `crew` profiles.
+- Existing old Crew Auth profiles, if any, are blocked by the app and secure rules.

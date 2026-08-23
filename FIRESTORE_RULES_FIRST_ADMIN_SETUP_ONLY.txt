@@ -1,0 +1,47 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // TEMPORARY FIRST-ADMIN SETUP ONLY.
+    // Use this only long enough to sign in with the first Firebase Auth account
+    // and press "Create Admin Profile". Immediately replace with
+    // FIRESTORE_RULES_SECURE_AUTH.txt after the admin profile exists.
+
+    match /framefusion_users/{userId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /framefusion_tasks/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /framefusion_crew/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /framefusion_projects/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /framefusion_signatures/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /framefusion_receipts/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /framefusion_settings/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /framefusion_rentals/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
